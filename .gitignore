@@ -1,5 +1,5 @@
 # Build output and generated configuration
-build*/
+/build*/
 sdkconfig
 sdkconfig.old
 managed_components/

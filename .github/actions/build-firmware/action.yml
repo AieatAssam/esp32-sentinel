@@ -1,0 +1,74 @@
+# Builds one firmware configuration with ESP-IDF and merges it into a single flash image.
+# Runs inside the espressif/idf container; the calling job sets `container:`.
+name: Build firmware image
+description: Build an ESP-IDF configuration and merge it into one ready-to-flash image at offset 0.
+
+inputs:
+  build-dir:
+    description: idf.py build directory, for example build_rel
+    required: true
+  defaults:
+    description: Semicolon-separated sdkconfig defaults files
+    required: true
+  image:
+    description: Output image base name, without .bin
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare container
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The workspace is owned by the runner user, not by root inside the container.
+        git config --global --add safe.directory '*'
+        # CMakeLists.txt applies a patch to the managed TinyUSB component at configure time.
+        if ! command -v patch >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends patch
+        fi
+
+    - name: Build
+      shell: bash
+      env:
+        BUILD_DIR: ${{ inputs.build-dir }}
+        DEFAULTS: ${{ inputs.defaults }}
+      run: |
+        set -euo pipefail
+        . "$IDF_PATH/export.sh"
+        idf.py -B "$BUILD_DIR" -D SDKCONFIG="$BUILD_DIR/sdkconfig" -D SDKCONFIG_DEFAULTS="$DEFAULTS" build
+
+    - name: Merge into one flash image
+      shell: bash
+      env:
+        BUILD_DIR: ${{ inputs.build-dir }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        . "$IDF_PATH/export.sh"
+        out="$PWD/$IMAGE.bin"
+        # @flash_args is written by the build: bootloader at 0x0, partition table at 0x8000, app at 0x20000.
+        (cd "$BUILD_DIR" && python -m esptool --chip esp32s3 merge-bin -o "$out" @flash_args)
+        sha256sum "$IMAGE.bin" > "$IMAGE.bin.sha256"
+        cat "$IMAGE.bin.sha256"
+
+    - name: Copy separate parts for updates
+      shell: bash
+      env:
+        BUILD_DIR: ${{ inputs.build-dir }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        # One file per flash_files entry, named by role. Writing these at their offsets
+        # leaves the NVS partition (0x9000) untouched, so settings and credentials survive.
+        python3 - "$BUILD_DIR" "$IMAGE" <<'EOF'
+        import json, os, shutil, sys
+        bdir, image = sys.argv[1], sys.argv[2]
+        files = json.load(open(os.path.join(bdir, "flasher_args.json")))["flash_files"]
+        roles = {"0x0": "bootloader", "0x8000": "partition-table", "0x20000": "app"}
+        for offset, rel in files.items():
+            shutil.copy(os.path.join(bdir, rel), f"{image}-{roles[offset]}.bin")
+        EOF
+        sha256sum "$IMAGE"-bootloader.bin "$IMAGE"-partition-table.bin "$IMAGE"-app.bin > "$IMAGE.parts.sha256"
+        cat "$IMAGE.parts.sha256"
