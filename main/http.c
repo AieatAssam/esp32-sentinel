@@ -27,7 +27,9 @@
  */
 #include "http.h"
 
+#include <errno.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -62,6 +64,11 @@ static const char *TAG = "http";
 #define MAX_WS_IN        128            /* client frames are discarded; larger ones close the session */
 #define SNAP_MAX         16384          /* sensing frame bound (typ. 6-8 KB); allocated in PSRAM */
 #define WS_PERIOD_US     (100 * 1000)   /* 10 Hz */
+#define HTTPD_SESSIONS   10             /* a browser alone holds 6 keep-alive connections plus the WS */
+/* lwIP must run out of sockets after httpd's session table, never before: LRU purge only fires on
+ * a full session table, and an accept() failing with ENFILE first leaves the server dead for as
+ * long as the clients hold their sockets. 3 = httpd internals, 1 = sensing ICMP, 2 spare. */
+_Static_assert(CONFIG_LWIP_MAX_SOCKETS >= HTTPD_SESSIONS + 3 + 1 + 2, "lwIP socket budget");
 #define FW_VERSION       "0.1.0"
 #define LOCK_MIN_US      (5LL * 1000000)  /* POST /api/lock: one per 5 s */
 #define WRITE_MIN_US     (5LL * 1000000)  /* calibrate and wifi (NVS writes): one per 5 s each */
@@ -539,15 +546,37 @@ static void ws_remove(int fd)
     while (j < MAX_WS_CLIENTS) s_ws_fds[j++] = -1;
 }
 
+/* Sends on a WS session never block: a backgrounded tab stops reading, and a blocking send would
+ * hold the single httpd task (SO_SNDTIMEO is enforced from lwIP's 1 s netconn poll, so even a short
+ * timeout costs up to 1 s per stuck client per frame). A frame that does not fit in the socket's send
+ * buffer at once fails, and so does a short send, which httpd_ws_send_frame_async would otherwise
+ * count as success and desync the stream; ws_push_work then closes the session. */
+static int ws_send(httpd_handle_t hd, int fd, const char *buf, size_t len, int flags)
+{
+    (void)hd;
+    int r = send(fd, buf, len, flags | MSG_DONTWAIT);
+    if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return HTTPD_SOCK_ERR_TIMEOUT;
+    return r == (int)len ? r : HTTPD_SOCK_ERR_FAIL;
+}
+
+/* Reset rather than FIN: with its send queue full, a graceful close blocks the httpd task for the
+ * 2 s send timeout waiting for room to queue the FIN. */
+static void ws_drop(int fd)
+{
+    ws_remove(fd);
+    struct linger lg = {.l_onoff = 1, .l_linger = 0};
+    setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    httpd_sess_trigger_close(s_server, fd);
+}
+
 static void ws_add(int fd)
 {
     for (int i = 0; i < MAX_WS_CLIENTS; i++) {
         if (s_ws_fds[i] == fd) return;
     }
+    httpd_sess_set_send_override(s_server, fd, ws_send);
     if (s_ws_fds[MAX_WS_CLIENTS - 1] != -1) {
-        int old = s_ws_fds[0];
-        ws_remove(old);
-        httpd_sess_trigger_close(s_server, old);
+        ws_drop(s_ws_fds[0]);
     }
     for (int i = 0; i < MAX_WS_CLIENTS; i++) {
         if (s_ws_fds[i] == -1) {
@@ -608,9 +637,12 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
 /* Runs on the httpd task. The timer only queues this, so sends never run on the timer stack
  * and never race with close_fn. */
+static atomic_bool s_push_queued;      /* at most one push in the work queue */
+
 static void ws_push_work(void *arg)
 {
     (void)arg;
+    atomic_store(&s_push_queued, false);
     if (!s_server) return;
     size_t n = sensing_snapshot_json(s_ws_buf, SNAP_MAX);
     if (n == 0) {
@@ -632,7 +664,12 @@ static void ws_push_work(void *arg)
             continue;
         }
         if (httpd_ws_send_frame_async(s_server, fd, &frame) != ESP_OK) {
-            ws_remove(fd);
+            /* Slow, dead or desynced: drop it so it neither stalls the next frames nor holds a
+             * session slot. The page reconnects if it is still alive. */
+            ws_drop(fd);
+        } else {
+            /* A WS reader never sends, so without this LRU purge would evict it first. */
+            httpd_sess_update_lru_counter(s_server, fd);
         }
     }
 }
@@ -640,8 +677,9 @@ static void ws_push_work(void *arg)
 static void ws_push_cb(void *arg)
 {
     (void)arg;
-    if (s_server) {
-        httpd_queue_work(s_server, ws_push_work, NULL);
+    if (s_server && !atomic_exchange(&s_push_queued, true) &&
+        httpd_queue_work(s_server, ws_push_work, NULL) != ESP_OK) {
+        atomic_store(&s_push_queued, false);
     }
 }
 
@@ -1003,6 +1041,8 @@ esp_err_t http_start(void)
     cfg.stack_size = 8192;
     cfg.close_fn = session_close_cb;
     cfg.lru_purge_enable = true;
+    cfg.max_open_sockets = HTTPD_SESSIONS;
+    cfg.backlog_conn = HTTPD_SESSIONS;    /* default 5 dropped the 6th parallel SYN of a page load (1 s retry) */
     cfg.open_fn = open_fn;
     cfg.recv_wait_timeout = 2;            /* L3: a stalled client holds the server for 2 s per recv */
     cfg.send_wait_timeout = 2;

@@ -169,6 +169,8 @@ They have not been run as part of preparing this repository.
 `tools/threats_test.c` has comments that name `/tmp` paths. Those comments are not
 commands the repository depends on.
 
+On a running device, `tools/http_stall_repro.py` (standard library only) holds WebSocket clients that never read and idle connections open, and checks that the REST API and a reading WebSocket client keep working; run it after any change to `main/http.c`.
+
 ## Dashboard
 
 The dashboard is static files. Open `web/index.html?mock=1` in a browser to use the
