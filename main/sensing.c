@@ -287,6 +287,50 @@ static bool frame_bssid(const uint8_t *h, uint8_t *bssid, bool *uplink)
     return false;
 }
 
+#if CONFIG_DEV_BACKDOOR
+/* Raw capture ring (development only), allocated in PSRAM by the first sensing_raw_read. */
+#define RAW_RING 4096                       /* ~100 s at 40 frames/s */
+static portMUX_TYPE s_raw_mux = portMUX_INITIALIZER_UNLOCKED;
+static sensing_raw_t *s_raw;
+static uint32_t s_raw_w, s_raw_r, s_raw_drop; /* free-running indices, guarded by s_raw_mux */
+
+static void raw_push(const wifi_csi_info_t *info, const uint8_t *bssid, bool uplink)
+{
+    if (!s_raw) return;
+    sensing_raw_t r = {
+        .t_us = info->rx_ctrl.timestamp, .rssi = info->rx_ctrl.rssi, .noise_floor = info->rx_ctrl.noise_floor,
+        .rate = info->rx_ctrl.rate, .sig_mode = info->rx_ctrl.sig_mode, .mcs = info->rx_ctrl.mcs,
+        .cwb = info->rx_ctrl.cwb, .channel = info->rx_ctrl.channel, .sig_len = info->rx_ctrl.sig_len,
+        .flags = (uplink ? 1 : 0) | (info->first_word_invalid ? 2 : 0) | (info->rx_ctrl.aggregation ? 4 : 0),
+        .fc = info->hdr ? (uint16_t)(info->hdr[0] | info->hdr[1] << 8) : 0,
+    };
+    memcpy(r.bssid, bssid, 6);
+    memcpy(r.dmac, info->dmac, 6);
+    memcpy(r.iq, info->buf, 128);
+    portENTER_CRITICAL(&s_raw_mux);
+    if (s_raw_w - s_raw_r < RAW_RING) s_raw[s_raw_w++ % RAW_RING] = r;
+    else s_raw_drop++;
+    portEXIT_CRITICAL(&s_raw_mux);
+}
+
+size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped)
+{
+    if (!s_raw) {
+        sensing_raw_t *p = heap_caps_calloc(RAW_RING, sizeof(sensing_raw_t), MALLOC_CAP_SPIRAM);
+        portENTER_CRITICAL(&s_raw_mux);
+        s_raw = p;
+        portEXIT_CRITICAL(&s_raw_mux);
+    }
+    size_t n = 0;
+    portENTER_CRITICAL(&s_raw_mux);
+    while (n < max && s_raw_r != s_raw_w) out[n++] = s_raw[s_raw_r++ % RAW_RING];
+    *dropped = s_raw_drop;
+    s_raw_drop = 0;
+    portEXIT_CRITICAL(&s_raw_mux);
+    return n;
+}
+#endif
+
 static void csi_cb(void *ctx, wifi_csi_info_t *info)
 {
     (void)ctx;
@@ -298,6 +342,9 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
         memcpy(bssid, info->mac, 6);
         uplink = false;
     }
+#if CONFIG_DEV_BACKDOOR
+    raw_push(info, bssid, uplink);
+#endif
     uint8_t sig = info->rx_ctrl.sig_mode;
     uint8_t rate = info->rx_ctrl.rate;
 

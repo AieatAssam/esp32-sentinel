@@ -171,6 +171,8 @@ commands the repository depends on.
 
 On a running device, `tools/http_stall_repro.py` (standard library only) holds WebSocket clients that never read and idle connections open, and checks that the REST API and a reading WebSocket client keep working; run it after any change to `main/http.c`.
 
+On a development build, `tools/csi_capture.py OUT_FILE [SECONDS]` records raw per-frame CSI from `GET /api/csi_raw` (compiled out of release builds) for offline analysis; keep captures outside the repository, they hold MAC addresses.
+
 ## Dashboard
 
 The dashboard is static files. Open `web/index.html?mock=1` in a browser to use the

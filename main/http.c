@@ -743,6 +743,30 @@ static esp_err_t log_get_handler(httpd_req_t *req)
     free(buf);
     return err;
 }
+
+/* Raw CSI drain for tools/csi_capture.py: a uint32 count of records lost to a full ring, then
+ * sensing_raw_t records. The first request starts the capture. */
+static esp_err_t csi_raw_handler(httpd_req_t *req)
+{
+    if (!origin_ok_or_absent(req)) {
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "bad origin");
+    }
+    /* PSRAM, httpd task only: 5 KB of internal .bss left Wi-Fi unable to allocate frames to join. */
+    static sensing_raw_t *rec;
+    if (!rec && !(rec = heap_caps_malloc(32 * sizeof(*rec), MALLOC_CAP_SPIRAM))) {
+        return httpd_resp_send_500(req);
+    }
+    uint32_t dropped, d;
+    size_t n = sensing_raw_read(rec, 32, &dropped);
+    httpd_resp_set_type(req, "application/octet-stream");
+    esp_err_t err = httpd_resp_send_chunk(req, (const char *)&dropped, sizeof(dropped));
+    for (int i = 0; err == ESP_OK && n > 0 && i < 128; i++) {   /* at most 4096 records per request */
+        err = httpd_resp_send_chunk(req, (const char *)rec, n * sizeof(*rec));
+        n = sensing_raw_read(rec, 32, &d);
+    }
+    /* ponytail: drops counted during this request (d) are reported as 0 lost; fine at 0.5 s polling. */
+    return err == ESP_OK ? httpd_resp_send_chunk(req, NULL, 0) : err;
+}
 #endif
 
 /* ---------- start ---------- */
@@ -1063,6 +1087,7 @@ esp_err_t http_start(void)
         {.uri = "/api/fido",   .method = HTTP_GET,  .handler = fido_get_handler},
 #if CONFIG_DEV_BACKDOOR
         {.uri = "/api/log",    .method = HTTP_GET,  .handler = log_get_handler},
+        {.uri = "/api/csi_raw", .method = HTTP_GET, .handler = csi_raw_handler},
 #endif
         {.uri = "/api/fido/reset",   .method = HTTP_POST, .handler = fido_reset_handler},
         {.uri = "/api/fido/harden",  .method = HTTP_POST, .handler = fido_harden_handler},

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 /* Joined-mode link state, as reported by GET /api/wifi and the frame's "link" field. */
 typedef struct {
@@ -30,6 +31,26 @@ size_t sensing_snapshot_json(char *buf, size_t len);
 void sensing_calibrate_start(void);
 /* Clears the stored baseline (POST /api/calibrate?clear=1). */
 void sensing_calibrate_clear(void);
+
+#if CONFIG_DEV_BACKDOOR
+/* Development only: raw per-frame CSI for offline analysis (GET /api/csi_raw, tools/csi_capture.py).
+ * Little-endian, packed, 156 bytes. */
+typedef struct __attribute__((packed)) {
+    uint32_t t_us;          /* rx_ctrl.timestamp */
+    int8_t rssi, noise_floor;
+    uint8_t rate, sig_mode, mcs, cwb;
+    uint8_t flags;          /* bit0 uplink (to DS), bit1 first_word_invalid, bit2 A-MPDU */
+    uint8_t channel;
+    uint16_t sig_len;
+    uint16_t fc;            /* 802.11 frame control, 0 when the header is absent */
+    uint8_t bssid[6];       /* transmitter BSSID (frame_bssid), else the CSI source MAC */
+    uint8_t dmac[6];
+    int8_t iq[128];         /* LLTF: imag, real for 64 subcarriers */
+} sensing_raw_t;
+/* Starts capture on first call and moves up to max records, oldest first, out of the ring.
+ * *dropped is the number lost to a full ring since the previous call. */
+size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped);
+#endif
 
 /* Joined mode. The password is stored in NVS namespace "wifi" and never returned. */
 esp_err_t sensing_wifi_join(const char *ssid, const char *pass);

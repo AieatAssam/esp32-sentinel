@@ -22,8 +22,9 @@ Implemented in `main/sensing.c` and `main/sensing_dsp.c`. Values are in the tabl
 
 - **Motion.** Score from the per-subcarrier CSI variation, smoothed with an EWMA of 0.3
   per 100 ms tick. Compared against `motion_threshold` (default 0.15).
-- **Breathing.** A band-limited estimate from the CSI series. Shown and counted as
-  presence only when its gates pass (below). Enabled by default (`use_breathing`).
+- **Breathing.** Experimental. A band-limited estimate from the CSI series. Shown and counted
+  as presence only when its gates pass (below). Enabled by default (`use_breathing`). It has
+  not been seen to read in testing; see [what was measured](#breathing-what-was-measured).
 - **Baseline.** An empty-room baseline stored in NVS (namespace `app`, key `base`).
   Captured with `POST /api/calibrate` while the room is empty. Off by default
   (`use_baseline`).
@@ -40,8 +41,8 @@ A breathing estimate is produced only when the window passes these checks, in
 
 - The window is 30 s long (`BR_WIN_US`), filled from CSI samples at 10 Hz (300 samples,
   `BR_N`, each a 100 ms bin).
-- The first sample must fall within 1 s of the window start (`BR_GAP_US`), and no gap in
-  the window may be longer than 1 s.
+- The first sample must fall within 2 s of the window start (`BR_GAP_US`), and no gap in
+  the window may be longer than 2 s.
 - The mean CSI sample rate over the window must be at least 1.5 per second
   (`BR_MIN_FPS`).
 - Breathing is withheld while motion is above 0.5 (`BR_MOTION_MAX`).
@@ -49,6 +50,29 @@ A breathing estimate is produced only when the window passes these checks, in
   counts as presence only above confidence 0.5 (`BR_CONF_PRESENT`).
 
 The gate state is logged. Breathing estimates are not medical measurements.
+
+## Breathing: what was measured
+
+One 6-minute raw capture on a joined AP (20 Hz gateway ping, about 20 downlink CSI frames/s
+addressed to the device, no gaps), with a person about 1 m from the board working at a laptop.
+Analysed offline in 11 non-overlapping 30 s windows, each feature against an AR(1) noise model
+fitted to the same window:
+
+- Features tried: mean amplitude (what the firmware uses), RSSI, per-frame normalised
+  amplitudes (removes AGC) reduced by PCA, the best single subcarrier chosen on the previous
+  window, and adjacent-subcarrier phase difference reduced by PCA. Each with all downlink
+  frames of the AP and with only the frames addressed to the device.
+- 2 of 110 window tests beat the noise model, and no feature beat it in more than one window.
+  Peak rates jumped across the 6 to 30 per minute band from window to window, and the 10 Hz
+  series were close to white (lag-1 autocorrelation about 0.05).
+- Sensitivity: a steady 15 per minute sinusoid added to the recorded mean amplitude would have
+  been found in 8 of 11 windows at 1% of the mean amplitude and in all 11 at 2%. Irregular
+  breathing, or breathing under the movement of typing, could be larger and still be missed.
+
+So the gates and thresholds are left as they are: they correctly kept the estimate hidden. A
+reading needs a geometry where the chest moves a path that dominates the channel (closer to the
+device or between it and the AP) and a still person; that has not been tested. Raw captures for
+this kind of analysis come from `tools/csi_capture.py` on a development build.
 
 ## Trust: which access points count for presence
 

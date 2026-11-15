@@ -131,8 +131,8 @@ partition table and the application, and it does not write the settings partitio
    itself, not a name.
 3. **Wait for presence.** The presence panel starts with a passive estimate. It sits in "listening
    for breathing" until a Wi-Fi network is joined.
-4. **Optional: join Wi-Fi.** Under Advanced, join a network. Breathing estimates read only while
-   the device is joined and the room is still. The password is stored on the device.
+4. **Optional: join Wi-Fi.** Under Advanced, join a network. Breathing estimates (experimental) can
+   read only while the device is joined and the room is still. The password is stored on the device.
 5. **Calibrate with the room empty.** Under Advanced, record the empty-room baseline if you want
    it used in presence (`use_baseline`).
 6. **Set up the security key.** Under Advanced, "Security key" shows whether a PIN is set and how
@@ -194,9 +194,11 @@ a private advisory, not an issue.
 - **Presence is a heuristic.** It has not been measured against ground truth in this repository,
   and it can be wrong in either direction. Pets, fans and people in the room change it, and moving
   the device changes the baseline.
-- **Breathing needs Wi-Fi and stillness.** The breathing estimate reads only while the device is
-  joined to a Wi-Fi network and a 30-second window passes the gates in
-  [docs/SENSING.md](docs/SENSING.md#breathing-gates). It is not a medical measurement.
+- **Breathing is experimental and has not been seen to work.** The estimate can read only while
+  the device is joined to a Wi-Fi network and a 30-second window passes the gates in
+  [docs/SENSING.md](docs/SENSING.md#breathing-gates). In the one recorded test (a person about
+  1 m away, working at a laptop) no breathing signal rose above noise, so it stays hidden; see
+  [docs/SENSING.md](docs/SENSING.md#breathing-what-was-measured). It is not a medical measurement.
 - **Not a certified security key.** The FIDO implementation is not certified. Attestation is
   self-signed.
 - **Browser flasher is untested on hardware.** The page was written from the build and flash

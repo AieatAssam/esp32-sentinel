@@ -42,6 +42,26 @@ static void test_noise_not_found(void)
     assert(conf < 0.2f);
 }
 
+/* Levels from a recorded capture (docs/SENSING.md, what was measured): 10 Hz bins of mean amplitude
+ * had a white-ish std of 2.3% of the mean. A 2% breathing tone at that noise was found offline in
+ * every window; the firmware estimator must show it too, and must not show the noise alone. */
+static void test_recorded_levels(void)
+{
+    static float x[N], y[N];
+    const float sd = 0.023f / 0.577f;          /* noise() has std 0.577 */
+    for (int i = 0; i < N; i++) {
+        float n = 1.0f + sd * noise();
+        x[i] = n + 0.02f * sinf(2.0f * (float)M_PI * 0.25f * (i / FS));
+        y[i] = n;
+    }
+    float bpm, conf, bpm0, conf0;
+    assert(dsp_breath_estimate(x, N, FS, &bpm, &conf));
+    assert(dsp_breath_estimate(y, N, FS, &bpm0, &conf0));
+    printf("recorded levels: 2%% tone bpm=%.1f conf=%.2f, noise alone conf=%.2f\n", bpm, conf, conf0);
+    assert(fabsf(bpm - 15.0f) <= 1.0f && conf >= 0.2f);
+    assert(conf0 < 0.2f);
+}
+
 static void test_resample_hole(void)
 {
     /* Samples at 0, 1, 2 s and 5 s; a 3 s hole between 2 s and 5 s. Interpolated inside the hole. */
@@ -59,6 +79,7 @@ int main(void)
 {
     test_tone_found();
     test_noise_not_found();
+    test_recorded_levels();
     test_resample_hole();
     printf("all sensing dsp cases pass\n");
     return 0;

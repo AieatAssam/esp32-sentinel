@@ -47,7 +47,7 @@
       <p class="state" id="pState" aria-live="polite">Waiting for the sensor</p>
       <p class="detail" id="pSub"></p>
       <p class="breath" id="breath" hidden>Breathing <output id="breathVal">0</output> per minute</p>
-      <p class="detail" id="breathListen" hidden>Listening for breathing: sit still for 30 seconds.</p>
+      <p class="detail" id="breathListen" hidden>Listening for breathing. It is experimental and has not yet been seen to read in testing; presence does not depend on it.</p>
       <p class="detail" id="breathMove" hidden>Too much movement to read breathing.</p>
       <p class="detail" id="breathWait" hidden>Breathing reads best on a joined Wi-Fi. <a href="#wifiSec" id="wifiLink">Join it in Advanced.</a></p>
     </section>
@@ -131,7 +131,7 @@
             <span class="flag" data-flag="channel" role="status"></span>
           </div>
           <div class="field">
-            <label for="c_use_breathing">Use breathing detection</label>
+            <label for="c_use_breathing">Use breathing detection (experimental)</label>
             <input type="checkbox" role="switch" id="c_use_breathing">
             <span class="flag" data-flag="use_breathing" role="status"></span>
           </div>
