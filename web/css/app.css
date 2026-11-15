@@ -1,0 +1,234 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console · redesign: full · font: Host Grotesk and Atkinson Hyperlegible Mono, latin woff2 vendored in vendor/fonts, system stacks as fallback */
+/* Hallmark · reworded "Motion" to "Presence" · the presence card leads; motion reads under Advanced, Sensing */
+/* Hallmark · reworded "FIDO2" to "Security key" · the card names what the operator does with it */
+/* Hallmark · reworded "Links 11" to "Links" · the count sits beside the heading */
+/* Hallmark · reworded "Settings" to "Advanced" · the drawer is now a disclosure, closed by default */
+/* Hallmark · reworded "Actions" to "Auto-lock" · the section holds the switch, the away time and Lock now */
+/* Hallmark · dropped cfgStatus · the settings drawer is replaced by per-control flags */
+/* Hallmark · dropped closeCfg · the drawer is replaced by the Advanced disclosure */
+/* Hallmark · dropped drawer · the settings drawer is replaced by the Advanced disclosure */
+/* Hallmark · dropped fidoPanel · the security key sits in Advanced, Security key */
+/* Hallmark · dropped fidoState · the touch prompt replaces the state readout */
+/* Hallmark · dropped fidoSub · the touch prompt replaces the state readout */
+/* Hallmark · dropped motionFill · the motion meter replaces the bar */
+/* Hallmark · dropped motionThr · the threshold marks the meter high edge */
+/* Hallmark · dropped openCfg · Advanced is a native disclosure */
+/* Hallmark · dropped pCount · the countdown sits in the presence sentence */
+/* Hallmark · dropped thrLabel · the threshold value sits beside its slider */
+/* Hallmark · dropped figures 0.28, 0.20, 7.44, 6-421.2, 11-7117.4, 1-6510.0, 9-585.3, 3-6510.0, 6-471.9, 4-7936.3, 7-6914.4, 11-523.0, 2-8039.8, 5-638.3, 12345678910111213 · sample readings from the old mock markup; the live frame supplies the numbers */
+/* Hallmark · dropped 0.28 · sample reading from the old mock markup; the live frame supplies it */
+/* Hallmark · dropped the old drawer's descriptive copy · the controls keep their labels, the Calibrate explanation stays in Advanced, Sensing */
+@import "tokens.css";
+@import "base.css";
+
+/* Layout */
+html, body { height: 100%; }
+body { background: var(--color-paper); }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md);
+  min-height: 56px; padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+.wordmark { margin-right: auto; font-size: var(--text-md); font-weight: 500; letter-spacing: 0; max-width: none; line-height: 1.3; }
+.conn, .fw, .mock { margin: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.conn[data-state="live"] { color: var(--color-ink-2); }
+.conn[data-state="reconnecting"] { color: var(--color-bad); }
+.mock { color: var(--color-bad); border: var(--rule-hair) solid var(--color-bad); border-radius: var(--radius-pill); padding: var(--space-3xs) var(--space-xs); }
+.fw { font-family: var(--font-outlier); font-size: var(--text-xs); }
+
+.app {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  height: calc(100dvh - 56px); min-height: 0;
+}
+
+/* Stage: the scene fills it; the readings sit on a band below it, outside the canvas, so no label sits under them */
+.stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--color-paper-3); }
+.scene { position: relative; flex: 1; min-height: 0; }
+.scene canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.scene-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; font-family: var(--font-outlier); font-size: var(--text-xs); line-height: 1; }
+.lab {
+  position: absolute; left: 0; top: 0; padding: var(--space-3xs) var(--space-2xs); white-space: nowrap;
+  color: var(--color-ink-2); text-shadow: 0 0 3px var(--color-paper-3), 0 0 6px var(--color-paper-3); will-change: transform;
+}
+.lab.ring { color: var(--color-muted); }
+.lab.is-sel { color: var(--color-ink); }
+.lab.is-off { visibility: hidden; }
+.stage-foot {
+  display: grid; gap: var(--space-2xs); flex: none;
+  padding: var(--space-xs) var(--space-md); border-top: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-3);
+}
+.wf-label { margin: 0; font-size: var(--text-sm); color: var(--color-ink-2); }
+.wf-label:empty { display: none; }
+.legend, .hint { margin: 0; font-size: var(--text-xs); color: var(--color-muted); line-height: 1.5; }
+.sensor-off {
+  position: absolute; inset: 0; z-index: 1;
+  display: grid; place-content: center; gap: var(--space-xs); text-align: center; padding: var(--space-md);
+  background: color-mix(in oklab, var(--color-paper-3) 82%, transparent);
+}
+.sensor-off h2 { font-size: var(--text-lg); color: var(--color-ink); }
+
+/* Side column */
+.side { min-height: 0; overflow: auto; border-left: var(--rule-hair) solid var(--color-rule); background: var(--color-paper); }
+.card { display: grid; gap: var(--space-sm); padding: var(--space-md); border-bottom: var(--rule-hair) solid var(--color-rule); }
+h2, h3 { margin: 0; font-size: var(--text-sm); font-weight: 500; letter-spacing: 0; line-height: 1.3; color: var(--color-ink-2); max-width: none; }
+h3 { font-size: var(--text-md); color: var(--color-ink); }
+.detail { margin: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.state { margin: 0; font-size: var(--text-xl); line-height: 1.15; letter-spacing: var(--tracking-display); color: var(--color-ink); }
+.state--small { font-size: var(--text-lg); }
+#presencePanel[data-state="present"] .state { color: var(--color-accent); }
+#presencePanel[data-state="soon"] .state { color: var(--color-accent); }
+#presencePanel[data-state="locked"] .state { color: var(--color-bad); }
+#presencePanel[data-state="offline"] .state { color: var(--color-ink-2); }
+.breath { margin: 0; font-family: var(--font-outlier); font-size: var(--text-md); color: var(--color-cool); }
+#touchPanel { color: var(--color-ink); background: var(--color-accent-soft); border-bottom-color: var(--color-accent); }
+#touchPanel h2, #touchPanel .detail { color: var(--color-ink); }
+#touchPanel .state { color: var(--color-accent); }
+
+/* Alerts: one row each; the danger token marks the edge */
+.alerts { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-sm); }
+.alert { display: grid; gap: var(--space-3xs); padding-left: var(--space-sm); border-left: 2px solid var(--color-bad); }
+.alert-title { margin: 0; font-size: var(--text-sm); color: var(--color-ink); }
+
+/* Scene key: lists only the marks on screen */
+.key { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-3xs); font-size: var(--text-xs); color: var(--color-ink-2); line-height: 1.5; }
+
+/* Fields: label, control, and the saved or error flag beside it */
+.field {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2xs) var(--space-sm);
+  min-height: 44px;
+}
+.field label { min-width: 0; font-size: var(--text-sm); color: var(--color-ink); }
+.field > input, .field > select, .field > .ctl { justify-self: end; }
+.field .flag { grid-column: 1 / -1; }
+.ctl { display: flex; align-items: center; gap: var(--space-xs); }
+.ctl output { min-width: 3ch; font-family: var(--font-outlier); font-size: var(--text-sm); color: var(--color-cool); text-align: right; }
+.flag { min-height: 1.3em; margin: 0; font-size: var(--text-xs); color: var(--color-muted); }
+.flag.err { color: var(--color-bad); }
+.flag.ok { color: var(--color-ok); }
+
+.input {
+  min-height: 40px; min-width: 0; padding: 0 var(--space-sm);
+  background: var(--color-paper-3); color: var(--color-ink);
+  border: var(--rule-hair) solid var(--color-muted); border-radius: var(--radius-pill);
+}
+.input:hover { border-color: var(--color-muted); }
+.input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.input:disabled { color: var(--color-muted); }
+.input:active { background: var(--color-paper-2); }
+.input--num { width: 6.5rem; font-family: var(--font-outlier); text-align: right; }
+select.input { width: 8.5rem; }
+input[type="text"].input { width: 100%; font-family: var(--font-outlier); }
+.field > input.input--wide { width: 12rem; max-width: 100%; font-family: var(--font-outlier); }
+input[type="range"] { width: 8.5rem; accent-color: var(--color-cool); min-height: 44px; margin: 0; }
+
+/* Switch: a native checkbox with role switch */
+input[role="switch"] {
+  appearance: none; -webkit-appearance: none; position: relative; flex: none;
+  width: 44px; height: 24px; margin: 0; border-radius: 999px; cursor: pointer;
+  border: var(--rule-hair) solid var(--color-muted); background: var(--color-paper-3);
+  transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+}
+input[role="switch"]::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--color-muted); transition: transform var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+input[role="switch"]:hover { border-color: var(--color-muted); }
+input[role="switch"]:checked { background: var(--color-accent-soft); border-color: var(--color-accent); }
+input[role="switch"]:checked::after { transform: translateX(20px); background: var(--color-accent); }
+input[role="switch"]:active { background: var(--color-paper-2); }
+input[role="switch"]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+input[role="switch"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Buttons: eight states, 40px tall, 44px hit area through the field padding */
+.btn {
+  min-height: 40px; min-width: 44px; padding: 0 var(--space-md); white-space: nowrap;
+  background: var(--color-paper-2); color: var(--color-ink);
+  border: var(--rule-hair) solid var(--color-rule-2); border-radius: var(--radius-pill);
+  font-size: var(--text-sm); font-weight: 500;
+  transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.btn:hover { border-color: var(--color-muted); background: var(--color-paper-3); }
+.btn:active { background: var(--color-paper); transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.btn:disabled { color: var(--color-muted); border-color: var(--color-rule); background: var(--color-paper); cursor: not-allowed; transform: none; }
+.btn[data-armed="1"] { border-color: var(--color-bad); color: var(--color-bad); }
+.btn--danger { border-color: var(--color-bad); color: var(--color-bad); background: var(--color-paper); }
+.btn--danger:hover { background: var(--color-bad-soft); }
+.btn--danger:disabled { border-color: var(--color-rule); color: var(--color-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); align-items: center; }
+
+/* Advanced disclosure */
+.advanced { border-bottom: var(--rule-hair) solid var(--color-rule); }
+.advanced > summary {
+  display: flex; align-items: center; min-height: 44px; padding: 0 var(--space-md);
+  font-size: var(--text-sm); font-weight: 500; color: var(--color-ink-2); cursor: pointer; list-style: none;
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after { content: "Show"; margin-left: auto; color: var(--color-muted); font-weight: 400; }
+.advanced[open] > summary::after { content: "Hide"; }
+.advanced > summary:hover { color: var(--color-ink); }
+.advanced > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.adv { display: grid; gap: 0; }
+.adv-sec { display: grid; gap: var(--space-sm); padding: var(--space-md); border-top: var(--rule-hair) solid var(--color-rule); }
+.reading { display: grid; gap: var(--space-xs); }
+.reading .measured { font-family: var(--font-outlier); color: var(--color-cool); font-size: var(--text-md); }
+meter { width: 100%; height: 8px; appearance: none; -webkit-appearance: none; border: 0; background: var(--color-paper-3); border-radius: 4px; }
+meter::-webkit-meter-bar { background: var(--color-paper-3); border: var(--rule-hair) solid var(--color-rule); border-radius: 4px; }
+meter::-webkit-meter-optimum-value { background: var(--color-cool); border-radius: 4px; }
+meter::-moz-meter-bar { background: var(--color-cool); border-radius: 4px; }
+
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2xs) var(--space-md); margin: 0; font-size: var(--text-sm); }
+.kv dt { color: var(--color-muted); }
+.kv dd { margin: 0; min-width: 0; text-align: right; font-family: var(--font-outlier); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.kv > div { display: contents; }
+.kv > div[hidden] { display: none !important; }
+
+.tablewrap { overflow-x: auto; min-width: 0; }
+table.links { width: 100%; min-width: 26rem; border-collapse: collapse; font-size: var(--text-sm); }
+table.links th { text-align: left; font-weight: 500; color: var(--color-muted); padding: var(--space-2xs) var(--space-xs); border-bottom: var(--rule-hair) solid var(--color-rule); font-size: var(--text-xs); }
+table.links td { padding: var(--space-xs); border-bottom: var(--rule-hair) solid var(--color-paper-3); font-family: var(--font-outlier); font-size: var(--text-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.links td.nm { font-family: var(--font-display); font-size: var(--text-sm); max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
+table.links tbody tr { cursor: pointer; }
+table.links tbody tr:hover td { background: var(--color-paper-2); }
+table.links tbody tr:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+table.links tbody tr[aria-current="true"] td { background: var(--color-cool-soft); }
+table.links meter { width: 3.5rem; height: 6px; }
+
+/* Danger zone: separated, bordered, red only where it warns */
+.danger { display: grid; gap: var(--space-sm); padding: var(--space-md); margin-top: var(--space-sm); border: var(--rule-hair) solid var(--color-bad); border-radius: var(--radius-card); background: var(--color-bad-soft); }
+.warn { margin: 0; font-size: var(--text-sm); color: var(--color-ink); }
+.warn strong { color: var(--color-bad); font-weight: 500; }
+
+/* Wi-Fi join: the state line carries the outcome in colour and in words */
+.wifi { display: grid; gap: var(--space-sm); margin: 0; }
+#wState[data-state="connected"] { color: var(--color-ok); }
+#wState[data-state="failed"] { color: var(--color-bad); }
+
+/* Narrow: the scene stacks above the controls; the readings leave the picture */
+@media (max-width: 60rem) {
+  .app { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .stage { display: flex; flex-direction: column; overflow: visible; }
+  .scene { position: relative; inset: auto; flex: none; height: 56vh; min-height: 18rem; }
+  .stage-foot {
+    position: static; max-width: none; margin: 0; padding: var(--space-sm) var(--gutter);
+    background: var(--color-paper-3); border-radius: 0;
+  }
+  .side { border-left: 0; border-top: var(--rule-hair) solid var(--color-rule); overflow: visible; }
+}
+@media (max-width: 40rem) {
+  .top { padding: var(--space-xs) var(--space-md); }
+  .card, .adv-sec { padding: var(--space-sm) var(--space-md); }
+  .stage-foot { padding: var(--space-xs) var(--space-md); }
+  .fw { display: none; }
+  .wordmark { margin-right: 0; }
+}
+
+/* Reduced motion: state changes are instant; the scene is static */
+@media (prefers-reduced-motion: reduce) {
+  input[role="switch"], input[role="switch"]::after, .btn { transition: none !important; }
+}

@@ -1,0 +1,86 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: s3-sentinel-release
+            build-dir: build_rel
+            defaults: sdkconfig.defaults
+          - image: s3-sentinel-dev
+            build-dir: build_dev
+            defaults: sdkconfig.defaults;sdkconfig.dev
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and merge
+        uses: ./.github/actions/build-firmware
+        with:
+          build-dir: ${{ matrix.build-dir }}
+          defaults: ${{ matrix.defaults }}
+          image: ${{ matrix.image }}
+
+      - name: Upload parts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.image }}
+          path: |
+            ${{ matrix.image }}-bootloader.bin
+            ${{ matrix.image }}-partition-table.bin
+            ${{ matrix.image }}-app.bin
+          if-no-files-found: error
+
+  deploy:
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download images
+        uses: actions/download-artifact@v8
+        with:
+          pattern: s3-sentinel-*
+          merge-multiple: true
+
+      - name: Assemble site
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp -R flasher/. _site/
+          cp s3-sentinel-release-bootloader.bin s3-sentinel-release-partition-table.bin \
+            s3-sentinel-release-app.bin s3-sentinel-dev-bootloader.bin \
+            s3-sentinel-dev-partition-table.bin s3-sentinel-dev-app.bin _site/
+          ls -l _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

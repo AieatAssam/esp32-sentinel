@@ -1,0 +1,22 @@
+# Build output and generated configuration
+build*/
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# Local device backups and restore artifacts (binary, device-specific)
+backup/*.bin
+backup/restore-check.bin
+
+# Local design tooling output
+.hallmark/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs and OS files
+*.log
+.DS_Store

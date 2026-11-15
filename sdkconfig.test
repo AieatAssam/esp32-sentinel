@@ -1,0 +1,6 @@
+# Host test build overlay (tools/fido_test.py). Use on top of sdkconfig.dev:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.dev;sdkconfig.test" build
+# Grants FIDO user presence without a press and keeps eFuses virtual (RAM only).
+# Never ship or leave a board running this build.
+CONFIG_FIDO_TEST_AUTO_UP=y
+CONFIG_EFUSE_VIRTUAL=y

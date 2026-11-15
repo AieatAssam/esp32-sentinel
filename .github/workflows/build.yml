@@ -1,0 +1,130 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Host C tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -Wall -Werror -I main tools/lock_policy_test.c -o "$RUNNER_TEMP/lock_policy_test"
+          "$RUNNER_TEMP/lock_policy_test"
+          cc -Wall -Werror -I main tools/net_policy_test.c -o "$RUNNER_TEMP/net_policy_test"
+          "$RUNNER_TEMP/net_policy_test"
+          cc -Wall -Werror -I main tools/threats_test.c main/threats.c -o "$RUNNER_TEMP/threats_test"
+          "$RUNNER_TEMP/threats_test"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Syntax-check dashboard scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in web/js/*.js; do node --check "$f"; done
+
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: s3-sentinel-release
+            build-dir: build_rel
+            defaults: sdkconfig.defaults
+          - image: s3-sentinel-dev
+            build-dir: build_dev
+            defaults: sdkconfig.defaults;sdkconfig.dev
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and merge
+        uses: ./.github/actions/build-firmware
+        with:
+          build-dir: ${{ matrix.build-dir }}
+          defaults: ${{ matrix.defaults }}
+          image: ${{ matrix.image }}
+
+      - name: Upload images and checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.image }}
+          path: |
+            ${{ matrix.image }}.bin
+            ${{ matrix.image }}.bin.sha256
+            ${{ matrix.image }}-bootloader.bin
+            ${{ matrix.image }}-partition-table.bin
+            ${{ matrix.image }}-app.bin
+            ${{ matrix.image }}.parts.sha256
+          if-no-files-found: error
+
+  release:
+    # Attaches the images to a GitHub Release when a v* tag is pushed.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host-tests, web, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download images
+        uses: actions/download-artifact@v8
+        with:
+          pattern: s3-sentinel-*
+          merge-multiple: true
+
+      - name: Verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c s3-sentinel-release.bin.sha256 s3-sentinel-dev.bin.sha256
+          sha256sum -c s3-sentinel-release.parts.sha256 s3-sentinel-dev.parts.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            s3-sentinel-release.bin
+            s3-sentinel-release.bin.sha256
+            s3-sentinel-release-bootloader.bin
+            s3-sentinel-release-partition-table.bin
+            s3-sentinel-release-app.bin
+            s3-sentinel-release.parts.sha256
+            s3-sentinel-dev.bin
+            s3-sentinel-dev.bin.sha256
+            s3-sentinel-dev-bootloader.bin
+            s3-sentinel-dev-partition-table.bin
+            s3-sentinel-dev-app.bin
+            s3-sentinel-dev.parts.sha256
+          body: |
+            Two builds are attached. The release build is the firmware to use. The development
+            build is secondary and is for developers only.
+
+            **Clean install** (wipes settings, Wi-Fi, FIDO credentials and PIN): write the whole
+            image at offset 0, `s3-sentinel-release.bin`, with esptool, or use the browser
+            flasher at https://aieatassam.github.io/esp32-sentinel/ and choose erase.
+
+            **Update** (keeps settings and credentials): write the three parts at their offsets
+            with esptool, `s3-sentinel-release-bootloader.bin` at `0x0`,
+            `s3-sentinel-release-partition-table.bin` at `0x8000` and `s3-sentinel-release-app.bin`
+            at `0x20000`, or use the browser flasher without erasing. A release that changes
+            `partitions.csv` needs a clean install; its notes say so.
+
+            **Development build** (`s3-sentinel-dev.bin`): enables `CONFIG_DEV_BACKDOOR`, which
+            adds the debug log endpoint `/api/log`, vendor security-key commands `0x51` and
+            `0x52`, and download mode over HTTP without a BOOT hold. Use it only on a test
+            device, never on one that holds credentials you need.
+
+            Check each file against its `.sha256` or `.parts.sha256` file before flashing.

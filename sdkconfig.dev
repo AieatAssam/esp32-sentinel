@@ -1,0 +1,4 @@
+# Development build overlay. Use with:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.dev" build
+# Never ship a firmware built with this file.
+CONFIG_DEV_BACKDOOR=y

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Presence, auto-lock and sensing status for the S3 Sentinel device, from its Wi-Fi radio scene.">
+<title>S3 Sentinel</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<header class="top">
+  <h1 class="wordmark">S3 Sentinel</h1>
+  <p class="conn" id="conn" data-state="connecting"><span id="connText">Connecting</span></p>
+  <p class="mock" id="mockBadge" hidden>Simulated data</p>
+  <p class="fw" id="fwLine">Firmware unknown</p>
+</header>
+
+<main class="app" id="main">
+  <section class="stage" aria-label="Radio scene">
+    <div class="scene" id="scene">
+      <div class="sensor-off" id="sensorOff" hidden>
+        <h2>Sensor offline</h2>
+        <p class="detail" id="sensorOffWhy">Firmware sensing is not ready.</p>
+      </div>
+    </div>
+    <div class="stage-foot">
+      <p class="wf-label" id="wfLabel"></p>
+      <p class="legend">Distance estimated from signal strength. Direction is not measurable with one antenna: angular placement is arbitrary but stable.</p>
+      <ul class="key" id="sceneKey" hidden></ul>
+      <p class="hint">Drag to orbit. Click a link to inspect its CSI.</p>
+    </div>
+  </section>
+
+  <aside class="side" aria-label="Controls">
+    <section class="card" id="presencePanel" data-state="present" aria-labelledby="hPresence">
+      <h2 id="hPresence">Presence</h2>
+      <p class="state" id="pState" aria-live="polite">Waiting for the sensor</p>
+      <p class="detail" id="pSub"></p>
+      <p class="breath" id="breath" hidden>Breathing <output id="breathVal">0</output> per minute</p>
+      <p class="detail" id="breathListen" hidden>Listening for breathing: sit still for 30 seconds.</p>
+      <p class="detail" id="breathMove" hidden>Too much movement to read breathing.</p>
+      <p class="detail" id="breathWait" hidden>Breathing reads best on a joined Wi-Fi. <a href="#wifiSec" id="wifiLink">Join it in Advanced.</a></p>
+    </section>
+
+    <section class="card" id="alertPanel" hidden aria-labelledby="hAlerts">
+      <h2 id="hAlerts">Alerts</h2>
+      <ul class="alerts" id="alertList" aria-live="polite"></ul>
+    </section>
+
+    <section class="card" id="touchPanel" hidden aria-live="polite" aria-labelledby="hTouch">
+      <h2 id="hTouch">Security key</h2>
+      <p class="state state--small">Touch the BOOT button on the device</p>
+      <p class="detail">A request is waiting for approval.</p>
+    </section>
+
+    <section class="card" aria-labelledby="hAuto">
+      <h2 id="hAuto">Auto-lock</h2>
+      <div class="field">
+        <label for="c_autolock">Lock when no one is detected</label>
+        <input type="checkbox" role="switch" id="c_autolock">
+        <span class="flag" data-flag="autolock" role="status"></span>
+      </div>
+      <div class="field">
+        <label for="c_away_secs">Away time, seconds</label>
+        <input type="number" class="input input--num" id="c_away_secs" min="5" max="600" step="1" inputmode="numeric">
+        <span class="flag" data-flag="away_secs" role="status"></span>
+      </div>
+      <div class="actions">
+        <button class="btn" id="lockBtn" type="button" data-confirm="Confirm lock">Lock now</button>
+      </div>
+      <p class="flag" id="actStatus" role="status"></p>
+    </section>
+
+    <details class="advanced" id="advanced">
+      <summary>Advanced</summary>
+
+      <div class="adv">
+        <section class="adv-sec" id="wifiSec" aria-labelledby="hWifi">
+          <h2 id="hWifi">Wi-Fi</h2>
+          <p class="detail">The device joins your network only to measure the signal from your router. This dashboard stays reachable only over USB. Joining sends normal Wi-Fi connection requests.</p>
+          <form class="wifi" id="wifiForm" novalidate>
+            <div class="field">
+              <label for="w_ssid">Network name</label>
+              <input type="text" class="input input--wide" id="w_ssid" maxlength="32" autocomplete="off" spellcheck="false">
+              <span class="flag" data-flag="wifi_ssid" role="status"></span>
+            </div>
+            <div class="field">
+              <label for="w_pass">Password</label>
+              <input type="password" class="input input--wide" id="w_pass" maxlength="63" autocomplete="off" aria-describedby="w_pass_help">
+              <span class="flag" data-flag="wifi_pass" role="status"></span>
+            </div>
+            <p class="detail" id="w_pass_help">8 to 63 characters. Leave empty for an open network.</p>
+            <div class="actions">
+              <button class="btn" id="wJoinBtn" type="submit">Join network</button>
+              <button class="btn" id="wForgetBtn" type="button" data-confirm="Confirm forget" hidden>Forget network</button>
+            </div>
+            <p class="detail" id="wState" role="status" data-state="off">Not joined.</p>
+          </form>
+        </section>
+
+        <section class="adv-sec" aria-labelledby="hSensing">
+          <h2 id="hSensing">Sensing</h2>
+          <div class="field">
+            <label for="c_motion_threshold">Motion threshold</label>
+            <span class="ctl">
+              <input type="range" id="c_motion_threshold" min="0" max="1" step="0.01">
+              <output id="o_motion_threshold" for="c_motion_threshold">0.20</output>
+            </span>
+            <span class="flag" data-flag="motion_threshold" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_channel">Wi-Fi channel</label>
+            <select id="c_channel" class="input">
+              <option value="0">Auto</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+              <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+              <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+              <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+              <option value="13">13</option>
+            </select>
+            <span class="flag" data-flag="channel" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_use_breathing">Use breathing detection</label>
+            <input type="checkbox" role="switch" id="c_use_breathing">
+            <span class="flag" data-flag="use_breathing" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_use_baseline">Use empty-room baseline</label>
+            <input type="checkbox" role="switch" id="c_use_baseline">
+            <span class="flag" data-flag="use_baseline" role="status"></span>
+          </div>
+          <div class="reading">
+            <p class="detail" id="baseText">Baseline not set.</p>
+            <p class="detail">Motion <output class="measured" id="motionVal">0.00</output></p>
+            <meter id="motionMeter" min="0" max="1" value="0"></meter>
+          </div>
+          <div class="actions">
+            <button class="btn" id="calBtn" type="button">Calibrate empty room</button>
+            <button class="btn" id="clearBaseBtn" type="button" data-confirm="Confirm clear">Clear baseline</button>
+          </div>
+          <p class="detail">Calibrate records for 10 seconds: leave the room while it runs.</p>
+          <p class="flag" id="calStatus" role="status"></p>
+        </section>
+
+        <section class="adv-sec" aria-labelledby="hLinks">
+          <h2 id="hLinks">Links, <span id="linkCount">0</span></h2>
+          <div class="tablewrap">
+            <table class="links">
+              <caption class="visually-hidden">Wi-Fi access points seen by the sensor</caption>
+              <thead><tr><th scope="col">Name</th><th scope="col">Channel</th><th scope="col">Signal</th><th scope="col">Distance</th><th scope="col">Disturbance</th><th scope="col">Rate</th><th scope="col">Flag</th></tr></thead>
+              <tbody id="linkBody"></tbody>
+            </table>
+          </div>
+          <p class="detail" id="bleCount"></p>
+        </section>
+
+        <section class="adv-sec" aria-labelledby="hDevice">
+          <h2 id="hDevice">Device</h2>
+          <dl class="kv">
+            <dt>Firmware</dt><dd id="dv_fw">Unknown</dd>
+            <dt>Uptime</dt><dd id="dv_uptime">Unknown</dd>
+            <dt>Free memory</dt><dd id="dv_heap">Unknown</dd>
+            <dt>Free PSRAM</dt><dd id="dv_psram">Unknown</dd>
+            <dt>Last reset</dt><dd id="dv_reset">Unknown</dd>
+            <div id="dvTemp" hidden><dt>Chip temperature</dt><dd id="dv_temp">Unknown</dd></div>
+          </dl>
+          <div class="field">
+            <label for="c_led_gpio">LED pin</label>
+            <input type="number" class="input input--num" id="c_led_gpio" min="0" max="48" step="1">
+            <span class="flag" data-flag="led_gpio" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_led_brightness">LED brightness</label>
+            <span class="ctl">
+              <input type="range" id="c_led_brightness" min="0" max="255" step="1">
+              <output id="o_led_brightness" for="c_led_brightness">0</output>
+            </span>
+            <span class="flag" data-flag="led_brightness" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_lock_os">Lock command for</label>
+            <select id="c_lock_os" class="input">
+              <option value="mac">macOS</option>
+              <option value="win">Windows</option>
+              <option value="linux">Linux</option>
+            </select>
+            <span class="flag" data-flag="lock_os" role="status"></span>
+          </div>
+          <div class="actions">
+            <button class="btn" id="rebootBtn" type="button" data-confirm="Confirm restart">Restart</button>
+            <button class="btn" id="dlBtn" type="button" data-confirm="Confirm update mode">Restart into firmware-update mode</button>
+          </div>
+          <p class="flag" id="devStatus" role="status"></p>
+        </section>
+
+        <section class="adv-sec" aria-labelledby="hKey">
+          <h2 id="hKey">Security key</h2>
+          <p class="detail" id="fidoCount">Stored credentials: not read yet.</p>
+          <p class="detail" id="fidoPin">PIN: not read yet.</p>
+          <div class="actions">
+            <button class="btn" id="fidoResetBtn" type="button" data-confirm="Confirm reset">Reset security key</button>
+          </div>
+          <p class="flag" id="fidoStatus" role="status"></p>
+
+          <section class="danger" aria-labelledby="hHarden">
+            <h3 id="hHarden">Permanently harden key storage</h3>
+            <p class="warn"><strong>This burns a one-time fuse. It cannot be undone. It does not block reflashing.</strong> Credentials already registered with this key will stop working.</p>
+            <div id="hardenForm">
+              <div class="field">
+                <label for="burnIn">Type BURN to enable the button</label>
+                <input type="text" class="input" id="burnIn" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="actions">
+                <button class="btn btn--danger" id="hardenBtn" type="button" disabled>Permanently harden key storage</button>
+              </div>
+            </div>
+            <p class="detail" id="hardenedNote" hidden>Key storage is hardened. This cannot be undone here.</p>
+            <p class="flag" id="hardenStatus" role="status"></p>
+          </section>
+        </section>
+      </div>
+    </details>
+  </aside>
+</main>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

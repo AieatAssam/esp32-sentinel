@@ -1,0 +1,37 @@
+menu "FIDO authenticator"
+
+config FIDO_TEST_AUTO_UP
+    bool "TEST ONLY: grant user presence without a button press"
+    default n
+    help
+      Makes every FIDO touch check succeed immediately. Used only by the
+      host test script on a board with no BOOT button press available.
+      Never enable this in a shipped firmware.
+
+endmenu
+
+menu "Development"
+
+config DEV_BACKDOOR
+    bool "DEV ONLY: touchless reflash and log access over USB"
+    default n
+    help
+      Development convenience. Enables:
+        - vendor CTAPHID 0x51 entering ROM download mode without a BOOT press,
+        - vendor CTAPHID 0x52 (read the firmware log over FIDO HID),
+        - POST /api/reboot?mode=download without a BOOT press.
+      Anyone with USB access can then reflash the device without touching it.
+      Never ship a firmware with this enabled. Release builds leave it off (download mode then needs BOOT held 3 s);
+      dev builds add it via sdkconfig.dev.
+
+config DEV_AUTORECOVER
+    bool "DEV ONLY: reboot into ROM download mode if no HTTP request in 60 s"
+    depends on DEV_BACKDOOR
+    default n
+    help
+      If no HTTP request has been served within 60 s of boot, the firmware
+      reboots into ROM download mode so it can be reflashed without anyone
+      pressing BOOT. A board that is simply unplugged from a host will also
+      drop into download mode. Must be off for a shipping build.
+
+endmenu

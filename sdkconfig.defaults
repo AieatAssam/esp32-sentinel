@@ -1,0 +1,51 @@
+# Target and flash
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# PSRAM: 8 MB octal, usable by malloc
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Console: USB-Serial/JTAG is taken over by TinyUSB, so logs go to UART0
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
+
+# Wi-Fi CSI and Bluetooth NimBLE observer (stacks are compiled in, not started)
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+
+# HTTP server with WebSocket (pre-handshake hook checks Origin)
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT=y
+
+# TinyUSB composite: CDC-NCM network, two HID interfaces (FIDO + keyboard)
+CONFIG_TINYUSB_NET_MODE_NCM=y
+CONFIG_TINYUSB_HID_COUNT=2
+
+# Core dump to flash on panic (read back with idf.py coredump-info after a crash loop)
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=n
+
+# USB suspend/resume events reach usb.c's event callback (logged to the RAM ring)
+CONFIG_TINYUSB_SUSPEND_CALLBACK=y
+CONFIG_TINYUSB_RESUME_CALLBACK=y
+
+# lwIP task logs the first tx frames through the log hook; 3072 is tight for that
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096
+
+# DEVELOPMENT ONLY: with no HTTP request within 60 s of boot, reboot into ROM
+# download mode. MUST be removed (or set =n) for the shipping build.
+CONFIG_DEV_AUTORECOVER=n
