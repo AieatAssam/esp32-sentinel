@@ -3,6 +3,26 @@
 All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Nearness: a 0 to 1 score (`near` in the feed and `/api/status`, `null` without a calibrated
+  baseline) for a person sitting still near the device, from how far the CSI subcarrier shape
+  has moved from the empty room. With `use_baseline` on, presence holds while `near` is at least
+  the new `near_threshold` setting (default 0.40, dashboard slider under Advanced, Sensing).
+  Relative, not a distance; see docs/SENSING.md for what was measured.
+
+### Changed
+
+- `use_breathing` defaults to off. A second capture of a person seated still showed no
+  breathing signal. When off, breathing neither sets nor holds presence. Stored settings keep
+  their value.
+- Empty-room calibration records for 30 s (was 10 s). The baseline is the mean of the capture
+  instead of a snapshot of the running average, and it stores a noise floor for nearness.
+  Baselines from earlier firmware still load, but nearness needs a new calibration.
+- Baseline presence uses nearness and `near_threshold` instead of the fixed deviation 0.5.
+
 ## [0.1.1] - 2026-11-16
 
 Tag `v0.1.0` (2026-11) was cut before the entries under Fixed; use 0.1.1.

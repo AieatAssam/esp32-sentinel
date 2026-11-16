@@ -42,6 +42,9 @@ def check(f):
     m = f.get("motion")
     if not (_is_num(m) and 0 <= m <= 1):
         e.append("motion out of range")
+    nr = f.get("near", "missing")
+    if nr is not None and not (_is_num(nr) and 0 <= nr <= 1):
+        e.append("near bad")
     if f.get("presence") not in ("present", "away"):
         e.append("presence bad")
     aw = f.get("away_in", "missing")

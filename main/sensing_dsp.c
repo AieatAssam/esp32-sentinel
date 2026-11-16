@@ -31,6 +31,40 @@ void dsp_resample(const float *v, const int64_t *t, int n, int64_t t0, int64_t s
     }
 }
 
+float dsp_shape_rms(const float *mu, const uint8_t *base, uint64_t mask)
+{
+    double acc = 0.0;
+    int cnt = 0;
+    for (int k = 0; k < 64; k++) {
+        if (!(mask >> k & 1)) continue;
+        double e = mu[k] - base[k] / 128.0;
+        acc += e * e;
+        cnt++;
+    }
+    return cnt ? (float)sqrt(acc / cnt) : NAN;
+}
+
+float dsp_shape_floor(const float *s1, const float *s2, uint32_t n, const float *ref, const uint8_t *base, uint64_t mask)
+{
+    if (!n) return NAN;
+    double acc = 0.0;
+    int cnt = 0;
+    for (int k = 0; k < 64; k++) {
+        if (!(mask >> k & 1)) continue;
+        double c = base[k] / 128.0 - ref[k];                /* baseline relative to ref */
+        acc += s2[k] / n - 2.0 * c * s1[k] / n + c * c;     /* mean over ticks of (x - base)^2 */
+        cnt++;
+    }
+    return cnt ? (float)sqrt(fmax(0.0, acc / cnt)) : NAN;
+}
+
+float dsp_nearness(float dist, float floor, float span)
+{
+    if (!isfinite(dist) || !isfinite(floor) || !(span > 0.0f)) return NAN;
+    float x = (dist - floor) / span;
+    return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
+}
+
 bool dsp_breath_estimate(const float *x, int n, float fs, float *bpm_out, float *conf_out)
 {
     *bpm_out = 0.0f;

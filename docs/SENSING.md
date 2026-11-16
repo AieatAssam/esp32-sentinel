@@ -23,16 +23,53 @@ Implemented in `main/sensing.c` and `main/sensing_dsp.c`. Values are in the tabl
 - **Motion.** Score from the per-subcarrier CSI variation, smoothed with an EWMA of 0.3
   per 100 ms tick. Compared against `motion_threshold` (default 0.15).
 - **Breathing.** Experimental. A band-limited estimate from the CSI series. Shown and counted
-  as presence only when its gates pass (below). Enabled by default (`use_breathing`). It has
-  not been seen to read in testing; see [what was measured](#breathing-what-was-measured).
+  as presence only when its gates pass (below). Off by default (`use_breathing`); when off it
+  neither sets nor holds presence. It has not been seen to read in testing; see
+  [what was measured](#breathing-what-was-measured).
 - **Baseline.** An empty-room baseline stored in NVS (namespace `app`, key `base`).
-  Captured with `POST /api/calibrate` while the room is empty. Off by default
+  Captured with `POST /api/calibrate` over 30 s while the room is empty. Off by default
   (`use_baseline`).
-- **Presence.** Motion, breathing, and baseline are evaluated in that order in
-  `tick_locked()`. The first one that holds sets `why` in the feed.
+- **Nearness.** How far the CSI subcarrier shape has moved from the empty-room baseline, 0 to
+  1 (`near` in the feed). See [Nearness](#nearness).
+- **Presence.** Motion, breathing (when `use_breathing` is on), and nearness (when
+  `use_baseline` is on and `near` is at least `near_threshold`) are evaluated in that order in
+  `tick_locked()`. The first one that holds sets `why` in the feed (`baseline` for nearness).
 - **Away.** Presence absent for `away_secs` (default 30 s, range 5 to 600). When
   auto-lock is on, the lock is sent once per away period. It is retried every 2 s while
   still away, if the send failed.
+
+## Nearness
+
+A person sitting still near the device changes the static shape of the channel (the
+per-subcarrier amplitude, each frame divided by its own mean), even when nothing moves. Nearness
+measures that change against the empty room:
+
+- Per AP, a time-weighted average of the normalised shape with time constant `NEAR_TAU_S`
+  (15 s, about a 30 s window). It starts as a plain mean and restarts after a CSI gap longer
+  than `NEAR_GAP_US` (5 s), so it is not available for 15 s after a restart.
+- Distance: RMS difference from the baseline shape over the valid subcarriers.
+- Calibration stores the baseline shape (mean of the capture's frames) and a noise floor: the
+  RMS distance of the running average from that shape over the capture.
+- `near = clamp((distance - floor) / NEAR_SPAN, 0, 1)`, with `NEAR_SPAN` 0.08. It is the largest
+  value over the APs that count for presence, and `null` when no AP has a calibrated shape and
+  floor, or its CSI rate is below `CSI_MIN_FPS`. The maths is in `main/sensing_dsp.c`, tested by
+  `tools/sensing_dsp_test.c`.
+
+Limits:
+
+- Relative, not metres. It says the room differs from the calibration, not where or how far.
+- Recalibrate after moving the device, the access point, or the furniture. The empty room
+  itself drifts: a minute or two after calibration its score was up to 0.38.
+- Measured in one room on one board, with one AP: two raw captures, a person seated still about
+  0.5 m from the device (224 s) and the empty room (180 s), replayed offline through this
+  algorithm with the first half of the empty capture as calibration. Score per 100 ms tick
+  (min/median/max): empty 0.00/0.17/0.38, seated 0.21/0.45/0.96. The margin is about 2 times
+  on the median distance (2 to 3 times within one capture), not a clean split: at
+  `near_threshold` 0.40 (the default) the empty half never read present, and with a 30 s away
+  time the seated capture read away for about 9% of its length. Averaging over 10 s did not separate the two at all (empty up to 0.41,
+  seated down to 0.01), so the window is 30 s.
+- Baselines stored by earlier firmware have no floor: nearness stays `null` until the room is
+  calibrated again.
 
 ## Breathing gates
 
@@ -68,6 +105,10 @@ fitted to the same window:
 - Sensitivity: a steady 15 per minute sinusoid added to the recorded mean amplitude would have
   been found in 8 of 11 windows at 1% of the mean amplitude and in all 11 at 2%. Irregular
   breathing, or breathing under the movement of typing, could be larger and still be missed.
+
+A second capture, a person seated still about 0.5 m from the device for 224 s, again showed no
+breathing signal in the breathing band. Breathing is therefore off by default and no longer
+counts as presence unless switched on.
 
 So the gates and thresholds are left as they are: they correctly kept the estimate hidden. A
 reading needs a geometry where the chest moves a path that dominates the channel (closer to the
@@ -107,7 +148,7 @@ flag by another 60 s. The flag appears as `flag: "spoof"` on the AP in the feed.
 
 ## Tunables
 
-Values are from `main/sensing.c` (lines 41 to 78) and `main/threats.h`. The config
+Values are from `main/sensing.c` (lines 42 to 83) and `main/threats.h`. The config
 values are from `main/config.c`.
 
 ### Access points and BLE
@@ -137,8 +178,11 @@ values are from `main/config.c`.
 | `MOTION_EWMA` | 0.3 | Motion smoothing per 100 ms tick |
 | `BASE_SHAPE_FULL` | 0.10 | Mean absolute shape difference that maps to baseline deviation 1.0 |
 | `BASE_DB_FULL` | 4.0 dB | RSSI shift from the baseline that maps to deviation 1.0, used when there is no CSI |
-| `BASE_DEV_PRESENT` | 0.5 | Baseline deviation that counts as presence |
-| `BASE_CAPTURE_S` | 10 s | Length of a baseline capture |
+| `BASE_CAPTURE_S` | 30 s | Length of a baseline capture |
+| `NEAR_TAU_S` | 15 s | Time constant of the nearness average |
+| `NEAR_SPAN` | 0.08 | RMS shape distance above the floor that maps to nearness 1.0 |
+| `NEAR_GAP_US` | 5 s | A CSI gap longer than this restarts the nearness average |
+| `NEAR_CAP_TICKS` | 50 | Ticks of a warm average needed in a capture to store a floor |
 | `BASE_MIN_SAMPLES` | 5 | Samples needed for a baseline to be stored |
 
 ### Breathing
@@ -204,6 +248,9 @@ measured with one antenna.
 |---|---|---|
 | `away_secs` | 30 s | 5 to 600 |
 | `motion_threshold` | 0.15 | 0 to 1 |
+| `near_threshold` | 0.40 | 0 to 1 |
+| `use_breathing` | off | |
+| `use_baseline` | off | |
 
 ## Feed fields
 

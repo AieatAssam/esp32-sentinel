@@ -75,12 +75,59 @@ static void test_resample_hole(void)
            out[0], out[1], out[2], out[3], out[4], out[5], out[6]);
 }
 
+/* Nearness: distance, calibration floor and score. */
+static void test_nearness(void)
+{
+    float mu[64], ref[64], s1[64] = {0}, s2[64] = {0};
+    uint8_t base[64];
+    uint64_t mask = 0;
+    for (int k = 0; k < 64; k++) {
+        base[k] = 128;                               /* flat baseline, 1.0 */
+        if (k != 0 && !(k >= 27 && k <= 37)) mask |= 1ULL << k;
+    }
+    /* Distance: every masked subcarrier 0.05 off -> RMS 0.05; unmasked ones ignored. */
+    for (int k = 0; k < 64; k++) mu[k] = (mask >> k & 1) ? (k % 2 ? 1.05f : 0.95f) : 9.0f;
+    assert(fabsf(dsp_shape_rms(mu, base, mask) - 0.05f) < 1e-5f);
+    assert(isnan(dsp_shape_rms(mu, base, 0)));
+
+    /* Floor: ticks alternating +-0.02 around the baseline, sums kept relative to ref = 1.01. */
+    for (int k = 0; k < 64; k++) ref[k] = 1.01f;
+    for (int t = 0; t < 300; t++) {
+        for (int k = 0; k < 64; k++) {
+            float x = 1.0f + (t % 2 ? 0.02f : -0.02f) - ref[k];
+            s1[k] += x;
+            s2[k] += x * x;
+        }
+    }
+    float fl = dsp_shape_floor(s1, s2, 300, ref, base, mask);
+    printf("nearness: floor %.4f (want 0.0200)\n", fl);
+    assert(fabsf(fl - 0.02f) < 1e-4f);
+    assert(isnan(dsp_shape_floor(s1, s2, 0, ref, base, mask)));
+
+    /* Score: 0 at or below the floor (empty room by construction), monotone, clamped. */
+    assert(dsp_nearness(0.01f, 0.02f, 0.08f) == 0.0f);
+    assert(dsp_nearness(0.02f, 0.02f, 0.08f) == 0.0f);
+    assert(fabsf(dsp_nearness(0.06f, 0.02f, 0.08f) - 0.5f) < 1e-5f);
+    assert(dsp_nearness(0.5f, 0.02f, 0.08f) == 1.0f);
+    float prev = -1.0f;
+    for (float d = 0.0f; d < 0.2f; d += 0.001f) {
+        float s = dsp_nearness(d, 0.02f, 0.08f);
+        assert(s >= prev && s >= 0.0f && s <= 1.0f);
+        prev = s;
+    }
+    /* No baseline / no floor / no frames: not available, never a number. */
+    assert(isnan(dsp_nearness(NAN, 0.02f, 0.08f)));
+    assert(isnan(dsp_nearness(0.05f, NAN, 0.08f)));
+    assert(isnan(dsp_nearness(0.05f, 0.02f, 0.0f)));
+}
+
 int main(void)
 {
     test_tone_found();
     test_noise_not_found();
     test_recorded_levels();
     test_resample_hole();
+    test_nearness();
     printf("all sensing dsp cases pass\n");
     return 0;
 }

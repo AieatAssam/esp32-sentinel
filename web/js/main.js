@@ -11,6 +11,7 @@ const E = {
   alertPanel: $('#alertPanel'), alertList: $('#alertList'), sceneKey: $('#sceneKey'),
   touch: $('#touchPanel'),
   baseText: $('#baseText'), motionVal: $('#motionVal'), motionMeter: $('#motionMeter'),
+  nearVal: $('#nearVal'), nearMeter: $('#nearMeter'), nearNeed: $('#nearNeed'),
   calBtn: $('#calBtn'), calStatus: $('#calStatus'), clearBaseBtn: $('#clearBaseBtn'),
   sensorOff: $('#sensorOff'), sensorOffWhy: $('#sensorOffWhy'), wfLabel: $('#wfLabel'), linkBody: $('#linkBody'),
   linkCount: $('#linkCount'), bleCount: $('#bleCount'), advanced: $('#advanced'),
@@ -24,9 +25,9 @@ const E = {
 };
 
 // Config keys, each with a control #c_<key> and a status flag [data-flag="<key>"].
-const FIELDS = ['autolock', 'away_secs', 'motion_threshold', 'channel', 'use_breathing', 'use_baseline',
+const FIELDS = ['autolock', 'away_secs', 'motion_threshold', 'near_threshold', 'channel', 'use_breathing', 'use_baseline',
   'led_gpio', 'led_brightness', 'lock_os'];
-const NUM = new Set(['away_secs', 'motion_threshold', 'channel', 'led_gpio', 'led_brightness']);
+const NUM = new Set(['away_secs', 'motion_threshold', 'near_threshold', 'channel', 'led_gpio', 'led_brightness']);
 const CONN = { live: 'Live', reconnecting: 'Reconnecting', connecting: 'Connecting' };
 const WHY = {
   motion: 'Movement seen in the room.',
@@ -234,6 +235,14 @@ function renderHud(f) {
   E.motionMeter.value = m;
   if (cfg) E.motionMeter.high = cfg.motion_threshold;
 
+  // Nearness: null until an empty-room calibration with a noise floor exists (older baselines have none).
+  const near = Number.isFinite(f.near) ? clamp(f.near, 0, 1) : null;
+  E.nearVal.textContent = near == null ? 'Not available' : near.toFixed(2);
+  E.nearMeter.hidden = near == null;
+  E.nearNeed.hidden = near != null;
+  if (near != null) E.nearMeter.value = near;
+  if (cfg && Number.isFinite(cfg.near_threshold)) E.nearMeter.high = cfg.near_threshold;
+
   const b = f.baseline && typeof f.baseline === 'object' ? f.baseline : {};
   const capturing = !!b.capturing;
   E.baseText.textContent = capturing ? `Capturing the empty room, ${Math.max(0, Math.ceil(+b.left || 0))} s left.`
@@ -284,6 +293,7 @@ function outputs() {
   if (!cfg) return;
   const thr = +$('#c_motion_threshold').value;
   $('#o_motion_threshold').textContent = thr.toFixed(2);
+  $('#o_near_threshold').textContent = (+$('#c_near_threshold').value).toFixed(2);
   $('#o_led_brightness').textContent = $('#c_led_brightness').value;
   if (lastFrame) renderHud(lastFrame);
 }
@@ -522,8 +532,8 @@ async function boot() {
   E.calBtn.addEventListener('click', async () => {
     E.calStatus.textContent = '';
     try {
-      await api('POST', '/api/calibrate');
-      E.calStatus.textContent = 'Recording for 10 seconds. Leave the room.';
+      const r = await api('POST', '/api/calibrate');
+      E.calStatus.textContent = `Recording for ${Number.isFinite(r && r.seconds) ? r.seconds : 30} seconds. Leave the room.`;
     } catch (e) { E.calStatus.textContent = 'Failed: ' + e.message; }
   });
 

@@ -23,6 +23,8 @@ jobs:
           "$RUNNER_TEMP/net_policy_test"
           cc -Wall -Werror -I main tools/threats_test.c main/threats.c -o "$RUNNER_TEMP/threats_test"
           "$RUNNER_TEMP/threats_test"
+          cc -Wall -Werror -I main tools/sensing_dsp_test.c main/sensing_dsp.c -lm -o "$RUNNER_TEMP/sensing_dsp_test"
+          "$RUNNER_TEMP/sensing_dsp_test"
 
   web:
     runs-on: ubuntu-latest

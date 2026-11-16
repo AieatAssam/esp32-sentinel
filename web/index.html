@@ -119,6 +119,14 @@
             <span class="flag" data-flag="motion_threshold" role="status"></span>
           </div>
           <div class="field">
+            <label for="c_near_threshold">Nearness threshold</label>
+            <span class="ctl">
+              <input type="range" id="c_near_threshold" min="0" max="1" step="0.01">
+              <output id="o_near_threshold" for="c_near_threshold">0.40</output>
+            </span>
+            <span class="flag" data-flag="near_threshold" role="status"></span>
+          </div>
+          <div class="field">
             <label for="c_channel">Wi-Fi channel</label>
             <select id="c_channel" class="input">
               <option value="0">Auto</option>
@@ -144,12 +152,15 @@
             <p class="detail" id="baseText">Baseline not set.</p>
             <p class="detail">Motion <output class="measured" id="motionVal">0.00</output></p>
             <meter id="motionMeter" min="0" max="1" value="0"></meter>
+            <p class="detail">Nearness <output class="measured" id="nearVal">Not available</output></p>
+            <meter id="nearMeter" min="0" max="1" value="0" hidden></meter>
+            <p class="detail" id="nearNeed">Nearness needs an empty-room calibration. Leave the room, then press Calibrate empty room below.</p>
           </div>
           <div class="actions">
             <button class="btn" id="calBtn" type="button">Calibrate empty room</button>
             <button class="btn" id="clearBaseBtn" type="button" data-confirm="Confirm clear">Clear baseline</button>
           </div>
-          <p class="detail">Calibrate records for 10 seconds: leave the room while it runs.</p>
+          <p class="detail">Calibrate records for 30 seconds: leave the room while it runs. Recalibrate after moving the device or the furniture.</p>
           <p class="flag" id="calStatus" role="status"></p>
         </section>
 

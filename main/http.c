@@ -220,6 +220,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "channel", c->channel);
     cJSON_AddBoolToObject(root, "use_breathing", c->use_breathing);
     cJSON_AddBoolToObject(root, "use_baseline", c->use_baseline);
+    cJSON_AddNumberToObject(root, "near_threshold", c->near_threshold);
     return send_json(req, root);
 }
 
@@ -274,6 +275,9 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
     if ((j = cJSON_GetObjectItem(in, "use_baseline"))) {
         if (cJSON_IsBool(j)) c.use_baseline = cJSON_IsTrue(j); else bad_type = true;
+    }
+    if ((j = cJSON_GetObjectItem(in, "near_threshold"))) {
+        if (cJSON_IsNumber(j)) c.near_threshold = (float)j->valuedouble; else bad_type = true;
     }
     cJSON_Delete(in);
 
@@ -431,7 +435,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     return send_json(req, root);
 }
 
-/* POST /api/calibrate starts a ~10 s empty-room baseline capture; ?clear=1 forgets it. */
+/* POST /api/calibrate starts a ~30 s empty-room baseline capture; ?clear=1 forgets it. */
 static esp_err_t calibrate_handler(httpd_req_t *req)
 {
     static int64_t last;
@@ -455,7 +459,7 @@ static esp_err_t calibrate_handler(httpd_req_t *req)
     } else {
         sensing_calibrate_start();
         cJSON_AddStringToObject(root, "baseline", "capturing");
-        cJSON_AddNumberToObject(root, "seconds", 10);
+        cJSON_AddNumberToObject(root, "seconds", 30);
     }
     cJSON_AddBoolToObject(root, "ok", true);
     return send_json(req, root);

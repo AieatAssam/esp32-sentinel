@@ -159,6 +159,7 @@ a panic but are not kept across a power loss.
 | `t` | integer timestamp |
 | `ch` | Wi-Fi channel, 1 to 13 |
 | `motion` | number, 0 to 1 |
+| `near` | nearness, number 0 to 1, or `null` when no calibrated baseline has a noise floor |
 | `presence` | `present` or `away` |
 | `away_in` | seconds until away, or `null` |
 | `why` | `motion`, `breathing`, `baseline`, or `null` |
@@ -197,7 +198,7 @@ Auth rules in this table:
 | GET | `/api/config` | Origin absent or exact | Current settings |
 | POST | `/api/config` | POST rules | Validated and written at most once per second |
 | GET | `/api/status` | Origin absent or exact | Firmware version (`fw`), presence, sensing status |
-| POST | `/api/calibrate` | POST rules | Records the baseline over 10 s. `?clear=1` clears it. 5 s rate limit |
+| POST | `/api/calibrate` | POST rules | Records the baseline over 30 s. `?clear=1` clears it. 5 s rate limit |
 | POST | `/api/lock` | POST rules | Sends the lock shortcut. 5 s rate limit |
 | POST | `/api/reboot` | POST rules | `?mode=normal` or `?mode=download`. Release download: answers 202 with a confirm message and waits for BOOT held 3 s within 30 s. Returns 409 if a FIDO op or another confirmation is pending. Dev builds reboot at once |
 | GET | `/api/fido` | Origin absent or exact | `credentials`, `count`, `hardened`, `pin_set`, `pin_retries`, `op`, `op_state` |

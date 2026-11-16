@@ -19,8 +19,8 @@ const ALERTS = Q.get('alerts') === '1';
 const NOBREATH = Q.get('nobreath') === '1';
 
 const cfg = {
-  autolock: true, away_secs: 30, motion_threshold: 0.2, lock_os: 'mac',
-  channel: 0, led_gpio: 48, led_brightness: 40, use_breathing: true, use_baseline: false,
+  autolock: true, away_secs: 30, motion_threshold: 0.2, near_threshold: 0.4, lock_os: 'mac',
+  channel: 0, led_gpio: 48, led_brightness: 40, use_breathing: false, use_baseline: false,
 };
 
 const fido = { count: 3, hardened: false, state: 'idle', op_state: null, pin_set: false, pin_retries: 8 };
@@ -60,7 +60,7 @@ const distOf = (rssi) => +Math.pow(10, (-40 - rssi) / 25).toFixed(2);
 
 function makeFrame(t, now) {
   if (STUB) {
-    return { t: Math.round(t * 1000), ch: 0, motion: 0, presence: 'present', away_in: null,
+    return { t: Math.round(t * 1000), ch: 0, motion: 0, near: null, presence: 'present', away_in: null,
       aps: [], ble: [], fido: { state: 'idle' }, breath: null, baseline: null, why: null, stub: true,
       ...(Q.get('fault') ? { fault: Q.get('fault') } : {}) };
   }
@@ -125,18 +125,23 @@ function makeFrame(t, now) {
     : baselineSet ? { set: true, dev: +(0.04 + 0.03 * Math.sin(t * 0.2)).toFixed(3) }
     : { set: false, dev: 0 };
 
+  // Nearness: null without a baseline; seated-like (about 0.5) while present, near 0.1 while away.
+  const near = baselineSet && !calUntil
+    ? +clamp((presence === 'away' ? 0.1 : 0.5) + 0.12 * Math.sin(t * 0.13) + 0.03 * Math.sin(t * 1.7), 0, 1).toFixed(2)
+    : null;
+
   let why = null;
   if (presence === 'present') {
     if (motion > cfg.motion_threshold) why = 'motion';
     else if (breath) why = 'breathing';
-    else if (cfg.use_baseline && baselineSet) why = 'baseline';
+    else if (cfg.use_baseline && near != null && near >= cfg.near_threshold) why = 'baseline';
   }
 
   const fc = t % 45;
   const fidoState = fido.state !== 'idle' ? fido.state : (fc >= 30 && fc < 34 ? 'waiting_touch' : fc >= 34 && fc < 35.5 ? 'ok' : 'idle');
 
   const frame = {
-    t: Math.round(t * 1000), ch: cfg.channel || 6, motion: +motion.toFixed(3),
+    t: Math.round(t * 1000), ch: cfg.channel || 6, motion: +motion.toFixed(3), ...(OLD ? {} : { near }),
     presence, away_in, aps, ble, fido: { state: fidoState }, breath, baseline, why, stub: false,
   };
   if (!OLD) {
@@ -168,7 +173,7 @@ export function startMock(onFrame, onStatus) {
   setInterval(tick, 100);
 }
 
-const RULES = { away_secs: [5, 600], motion_threshold: [0, 1], channel: [0, 13], led_gpio: [0, 48], led_brightness: [0, 255] };
+const RULES = { away_secs: [5, 600], motion_threshold: [0, 1], near_threshold: [0, 1], channel: [0, 13], led_gpio: [0, 48], led_brightness: [0, 255] };
 const BOOLS = ['autolock', 'use_breathing', 'use_baseline'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let dlUntil = 0;   // mock BOOT confirmation for download mode
@@ -193,8 +198,8 @@ export async function mockApi(method, path, body) {
 
   if (p === '/api/calibrate' && method === 'POST') {
     if (q.get('clear') === '1') { baselineSet = false; calUntil = 0; return { ok: true, cleared: true }; }
-    calUntil = performance.now() + 10000;
-    return { ok: true, seconds: 10 };
+    calUntil = performance.now() + 30000;
+    return { ok: true, seconds: 30 };
   }
 
   if (p === '/api/status') {

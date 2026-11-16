@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include <stddef.h>
 #include <string.h>
 #include "nvs.h"
 #include "esp_log.h"
@@ -21,14 +22,18 @@ static app_config_t s_cfg = {
     .led_gpio = 48,
     .led_brightness = 32,
     .channel = 0,
-    .use_breathing = true,
+    .use_breathing = false,
     .use_baseline = false,
+    .near_threshold = 0.40f,
 };
+
+_Static_assert(offsetof(app_config_t, near_threshold) == 36, "size of the stored blob before near_threshold");
 
 static esp_err_t validate(const app_config_t *c)
 {
     if (c->away_secs < 5 || c->away_secs > 600) return ESP_ERR_INVALID_ARG;
     if (!(c->motion_threshold >= 0.0f && c->motion_threshold <= 1.0f)) return ESP_ERR_INVALID_ARG;
+    if (!(c->near_threshold >= 0.0f && c->near_threshold <= 1.0f)) return ESP_ERR_INVALID_ARG;
     if (strnlen(c->lock_os, sizeof(c->lock_os)) >= sizeof(c->lock_os)) return ESP_ERR_INVALID_ARG;
     if (strcmp(c->lock_os, "mac") && strcmp(c->lock_os, "win") && strcmp(c->lock_os, "linux")) {
         return ESP_ERR_INVALID_ARG;
@@ -51,11 +56,12 @@ esp_err_t config_init(void)
         ESP_LOGI(TAG, "no stored config, using defaults (%s)", esp_err_to_name(err));
         return ESP_OK;
     }
-    app_config_t stored;
+    app_config_t stored = s_cfg;     /* a blob from before near_threshold keeps its default */
     size_t len = sizeof(stored);
     err = nvs_get_blob(h, NVS_KEY, &stored, &len);
     nvs_close(h);
-    if (err == ESP_OK && len == sizeof(stored) && validate(&stored) == ESP_OK) {
+    bool len_ok = len == sizeof(stored) || len == offsetof(app_config_t, near_threshold);
+    if (err == ESP_OK && len_ok && validate(&stored) == ESP_OK) {
         s_cfg = stored;
         ESP_LOGI(TAG, "config loaded from NVS");
     } else {

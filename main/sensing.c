@@ -66,8 +66,12 @@ static const char *TAG = "sensing";
 #define BR_CONF_PRESENT   0.5f    /* breathing counts as presence above this conf */
 #define MOTION_EWMA       0.3f    /* per 100 ms tick */
 #define BASE_DB_FULL      4.0f    /* RSSI shift from baseline that maps to dev 1.0 (no CSI) */
-#define BASE_DEV_PRESENT  0.5f    /* baseline dev that counts as presence */
-#define BASE_CAPTURE_S    10
+#define BASE_CAPTURE_S    30      /* also the window the nearness floor is measured over */
+#define NEAR_TAU_S        15.0f   /* nearness EWMA time constant (about a 30 s window) */
+#define NEAR_SPAN         0.08f   /* RMS shape distance above the floor that maps to nearness 1.0 */
+#define NEAR_GAP_US       (5LL * 1000000)  /* a CSI gap longer than this restarts the nearness average */
+#define NEAR_CAP_TICKS    50      /* warm ticks needed in a capture to store a nearness floor */
+#define NEAR_MASK         (((1ULL << 27) - 4) | (~0ULL << 38))   /* sc_valid(k, true): 2..26, 38..63 */
 #define BASE_MIN_SAMPLES  5
 #define BEACON_MIN_FPS    1.0f    /* total beacon rate below this counts as a collapse */
 #define BEACON_LOW_S      30      /* collapse must last this long before a rescan */
@@ -104,6 +108,9 @@ typedef struct {
     int64_t ewma_t;
     int ewma_n;
     float mu[64], var[64];        /* normalised amplitude mean and variance */
+    float nmu[64];                /* nearness: slower EWMA mean (NEAR_TAU_S) of the same */
+    uint32_t near_n;              /* frames since the nearness average (re)started */
+    int64_t near_t0;              /* when it (re)started */
     uint8_t csi_disp[64], pdp_disp[16];
     /* breathing: 100 ms bins of mean CSI amplitude, PSRAM */
     float bin_sum;
@@ -117,8 +124,13 @@ typedef struct {
     bool base_set, base_has_shape;
     float base_rssi;
     uint8_t base_shape[64];       /* mean normalised amplitude, x128 */
+    float base_floor;             /* nearness noise floor from the capture; NAN when none */
     float cap_sum;                /* RSSI accumulators during a capture */
     uint32_t cap_n;
+    float cap_f[64];              /* capture: sum of per-frame shapes */
+    uint32_t cap_fn;
+    float cap_ref[64], cap_s1[64], cap_s2[64];   /* capture: per-tick nmu sums, relative to cap_ref */
+    uint32_t cap_tn;
     /* published (written by the tick, under s_mux) */
     float motion, motion_rssi, motion_csi;
     float breath_bpm, breath_conf;
@@ -140,9 +152,14 @@ typedef struct {
     uint8_t has_shape;
     float rssi;
     uint8_t shape[64];
+    float floor;                  /* nearness noise floor; NAN when unknown */
 } base_entry_t;
 typedef struct { uint32_t magic; uint32_t n; base_entry_t e[AP_TABLE]; } base_blob_t;
-#define BASE_MAGIC 0x42415332u   /* "BAS2": layout with CSI shape */
+#define BASE_MAGIC 0x42415333u   /* "BAS3": layout with CSI shape and nearness floor */
+#define BASE_MAGIC_V2 0x42415332u   /* "BAS2": no floor; still loaded (nearness then unavailable) */
+typedef struct { uint8_t bssid[6]; uint8_t valid, has_shape; float rssi; uint8_t shape[64]; } base_v2_entry_t;
+typedef struct { uint32_t magic; uint32_t n; base_v2_entry_t e[AP_TABLE]; } base_v2_blob_t;
+_Static_assert(offsetof(base_entry_t, floor) == sizeof(base_v2_entry_t), "BAS3 entry is BAS2 plus the floor");
 #define NVS_NS "app"
 #define NVS_BASE_KEY "base"
 #define NVS_WIFI_NS "wifi"
@@ -163,6 +180,7 @@ static volatile uint8_t s_channel;
 static uint8_t s_passive_ch;               /* guarded by s_mux */
 static float s_motion_raw, s_motion;       /* guarded by s_mux */
 static float s_base_dev;                   /* guarded by s_mux */
+static float s_near = NAN;                 /* guarded by s_mux; NAN = not available */
 static bool s_cal_active;                  /* guarded by s_mux */
 static int64_t s_cal_end_us;
 static int64_t s_last_active_us;           /* guarded by s_mux; written by tick */
@@ -245,9 +263,11 @@ static ap_t *ap_admit(const uint8_t *mac, int64_t now)
                 a->base_set = true;
                 a->base_rssi = s_store[k].rssi;
                 a->base_has_shape = s_store[k].has_shape;
+                a->base_floor = s_store[k].floor;
                 memcpy(a->base_shape, s_store[k].shape, 64);
             }
         }
+        if (!a->base_set) a->base_floor = NAN;
         return a;
     }
 }
@@ -450,6 +470,23 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
                 a->mu[k] += alpha * d;
                 a->var[k] = (1.0f - alpha) * (a->var[k] + alpha * d * d);
             }
+        }
+        /* Nearness average: a cumulative mean until NEAR_TAU_S takes over, restarted after a gap so
+         * one stale frame never dominates it. */
+        if (a->ewma_n == 0 || t - a->ewma_t > NEAR_GAP_US) {
+            a->near_n = 0;
+            a->near_t0 = t;
+        }
+        float na = fmaxf(a->ewma_n ? 1.0f - expf(-(float)(t - a->ewma_t) / (NEAR_TAU_S * 1e6f)) : 1.0f,
+                         1.0f / (float)(a->near_n + 1));
+        for (int k = 0; k < 64; k++) {
+            if (!sc_valid(k, skip1)) continue;
+            a->nmu[k] = a->near_n ? a->nmu[k] + na * (norm[k] - a->nmu[k]) : norm[k];
+        }
+        if (a->near_n < 0x40000000) a->near_n++;
+        if (s_cal_active && !skip1) {
+            for (int k = 0; k < 64; k++) a->cap_f[k] += norm[k];
+            a->cap_fn++;
         }
         if (a->ewma_n < 0x40000000) a->ewma_n++;
         a->ewma_t = t;
@@ -813,10 +850,17 @@ static void store_load(void)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
-    base_blob_t b;
-    size_t len = sizeof(b);
-    if (nvs_get_blob(h, NVS_BASE_KEY, &b, &len) == ESP_OK && len == sizeof(b) && b.magic == BASE_MAGIC) {
-        for (uint32_t i = 0; i < b.n && i < AP_TABLE; i++) s_store[i] = b.e[i];
+    static union { base_blob_t v3; base_v2_blob_t v2; } u;     /* called once, at start */
+    size_t len = sizeof(u);
+    if (nvs_get_blob(h, NVS_BASE_KEY, &u, &len) == ESP_OK) {
+        if (len == sizeof(u.v3) && u.v3.magic == BASE_MAGIC) {
+            for (uint32_t i = 0; i < u.v3.n && i < AP_TABLE; i++) s_store[i] = u.v3.e[i];
+        } else if (len == sizeof(u.v2) && u.v2.magic == BASE_MAGIC_V2) {
+            for (uint32_t i = 0; i < u.v2.n && i < AP_TABLE; i++) {
+                memcpy(&s_store[i], &u.v2.e[i], sizeof(u.v2.e[i]));
+                s_store[i].floor = NAN;
+            }
+        }
     }
     nvs_close(h);
 }
@@ -1066,7 +1110,7 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
         if (a->trusted && !a->spoof) any_trusted = true;
     }
 
-    float motion_max = 0.0f, base_dev = 0.0f;
+    float motion_max = 0.0f, base_dev = 0.0f, near = NAN;
     for (int i = 0; i < AP_TABLE; i++) {
         ap_t *a = &s_ap[i];
         if (!a->used) continue;
@@ -1086,14 +1130,29 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
         if (!counts) continue;                 /* shown in the frame, never counted */
         if (a->motion > motion_max) motion_max = a->motion;
 
+        bool near_ok = csi_ok && now - a->near_t0 >= (int64_t)(NEAR_TAU_S * 1e6f);
         if (a->base_set) {
             float dev = (a->base_has_shape && csi_ok) ? shape_dev(a) : rssi_dev(a, now);
             if (dev > base_dev) base_dev = dev;
+            if (a->base_has_shape && near_ok) {
+                float n = dsp_nearness(dsp_shape_rms(a->nmu, a->base_shape, NEAR_MASK), a->base_floor, NEAR_SPAN);
+                if (isfinite(n) && !(n <= near)) near = n;      /* max over APs; NAN until one has a value */
+            }
+        }
+        if (s_cal_active && near_ok) {          /* capture: tick sums of nmu for the noise floor */
+            if (!a->cap_tn) memcpy(a->cap_ref, a->nmu, sizeof(a->cap_ref));
+            for (int k = 0; k < 64; k++) {
+                float x = a->nmu[k] - a->cap_ref[k];
+                a->cap_s1[k] += x;
+                a->cap_s2[k] += x * x;
+            }
+            a->cap_tn++;
         }
     }
     s_motion_raw = motion_max;
     s_motion += MOTION_EWMA * (motion_max - s_motion);
     s_base_dev = base_dev;
+    s_near = near;
 
     for (int i = 0; i < BLE_TABLE; i++) {
         if (s_ble[i].used && now - s_ble[i].last_us > BLE_TTL_US) s_ble[i].used = false;
@@ -1116,7 +1175,7 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
                 thr_ap_counts(a->trusted, a->spoof, any_trusted, now - s_trust_epoch_us)) breath_ok = true;
         }
     }
-    bool base_ok = cfg->use_baseline && s_base_dev >= BASE_DEV_PRESENT;
+    bool base_ok = cfg->use_baseline && isfinite(s_near) && s_near >= cfg->near_threshold;
     const char *why = motion_ok ? "motion" : breath_ok ? "breathing" : base_ok ? "baseline" : NULL;
     if (why) {
         s_last_active_us = now;
@@ -1166,6 +1225,18 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
     }
 }
 
+/* Caller holds s_mux. Clears an AP's capture accumulators. */
+static void cap_reset(ap_t *a)
+{
+    a->cap_n = 0;
+    a->cap_sum = 0;
+    a->cap_fn = 0;
+    a->cap_tn = 0;
+    memset(a->cap_f, 0, sizeof(a->cap_f));
+    memset(a->cap_s1, 0, sizeof(a->cap_s1));
+    memset(a->cap_s2, 0, sizeof(a->cap_s2));
+}
+
 /* Copies of the baseline store, built under the lock when a capture ends. */
 static void capture_finish(void)
 {
@@ -1175,21 +1246,26 @@ static void capture_finish(void)
     for (int i = 0; i < AP_TABLE; i++) {
         ap_t *a = &s_ap[i];
         if (!a->used || a->cap_n < BASE_MIN_SAMPLES) continue;
-        bool csi_ok = a->csi_fps >= CSI_MIN_FPS && a->ewma_n >= CSI_WARM;
+        /* Shape: mean of the capture's frames. Floor: RMS distance of the nearness average from it
+         * over the capture, so an unchanged room scores 0. */
+        bool csi_ok = a->csi_fps >= CSI_MIN_FPS && a->ewma_n >= CSI_WARM && a->cap_fn >= CSI_WARM;
         e[i].valid = 1;
         e[i].has_shape = csi_ok;
         memcpy(e[i].bssid, a->bssid, 6);
         e[i].rssi = a->cap_sum / a->cap_n;
         for (int k = 0; k < 64; k++) {
-            float q = csi_ok ? a->mu[k] * 128.0f : 0.0f;
+            float q = csi_ok ? a->cap_f[k] / a->cap_fn * 128.0f + 0.5f : 0.0f;
             e[i].shape[k] = q < 0.0f ? 0 : (q > 255.0f ? 255 : (uint8_t)q);
         }
+        e[i].floor = csi_ok && a->cap_tn >= NEAR_CAP_TICKS
+            ? dsp_shape_floor(a->cap_s1, a->cap_s2, a->cap_tn, a->cap_ref, e[i].shape, NEAR_MASK) : NAN;
         a->base_set = true;
         a->base_rssi = e[i].rssi;
         a->base_has_shape = csi_ok;
+        a->base_floor = e[i].floor;
         memcpy(a->base_shape, e[i].shape, 64);
     }
-    for (int i = 0; i < AP_TABLE; i++) { s_ap[i].cap_n = 0; s_ap[i].cap_sum = 0; }
+    for (int i = 0; i < AP_TABLE; i++) cap_reset(&s_ap[i]);
     portEXIT_CRITICAL(&s_mux);
     int n = 0, shapes = 0;
     for (int i = 0; i < AP_TABLE; i++) { if (e[i].valid) n++; if (e[i].has_shape) shapes++; }
@@ -1578,7 +1654,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
 {
     if (!buf || len < 64) return 0;
     if (s_fault) {
-        int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":0,\"motion\":0,\"presence\":\"present\","
+        int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":0,\"motion\":0,\"near\":null,\"presence\":\"present\","
                          "\"away_in\":null,\"why\":null,\"breath\":null,\"baseline\":null,"
                          "\"aps\":[],\"ble\":[],\"alerts\":[],"
                          "\"link\":{\"mode\":\"passive\",\"state\":\"off\",\"ssid\":null},"
@@ -1588,7 +1664,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     }
     int na = 0, nb = 0, nal = 0;
     int64_t now = now_us();
-    bool present; int away_in; const char *why; float motion;
+    bool present; int away_in; const char *why; float motion, near;
     bool br_vis; float br_bpm, br_conf; const char *br_state;
     float base_dev; bool cal_active; int cal_left;
     bool any_base;
@@ -1626,7 +1702,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
             if (s_trk[k].used && !memcmp(s_trk[k].addr, d->addr, 6)) d->first_us = s_trk[k].first_us;
         }
     }
-    present = s_present; away_in = s_away_in; why = s_why; motion = s_motion;
+    present = s_present; away_in = s_away_in; why = s_why; motion = s_motion; near = s_near;
     br_vis = s_br_visible; br_bpm = s_br_bpm; br_conf = s_br_conf; br_state = s_br_state;
     base_dev = s_base_dev; cal_active = s_cal_active;
     cal_left = cal_active ? (int)((s_cal_end_us - now) / 1000000) + 1 : 0;
@@ -1648,6 +1724,8 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     buf[0] = 0;
     jw_fmt(&w, "{\"t\":%lld,\"ch\":%u,\"motion\":", (long long)(now / 1000), (unsigned)s_channel);
     jw_float(&w, motion, 2);
+    jw_raw(&w, ",\"near\":");
+    if (isfinite(near)) jw_float(&w, near, 2); else jw_raw(&w, "null");
     jw_fmt(&w, ",\"presence\":\"%s\",\"away_in\":", present ? "present" : "away");
     if (away_in >= 0) jw_fmt(&w, "%d", away_in);
     else jw_raw(&w, "null");
@@ -1776,7 +1854,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     jw_raw(&w, "\"}}");
     if (!w.ok) {
         /* Last resort: an always-valid minimal frame. */
-        int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":%u,\"motion\":0,\"presence\":\"present\","
+        int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":%u,\"motion\":0,\"near\":null,\"presence\":\"present\","
                          "\"away_in\":null,\"why\":null,\"breath\":null,"
                          "\"baseline\":{\"set\":false,\"dev\":0},\"aps\":[],\"ble\":[],\"alerts\":[],"
                          "\"link\":{\"mode\":\"passive\",\"state\":\"off\",\"ssid\":null},"
@@ -1792,7 +1870,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
 void sensing_calibrate_start(void)
 {
     portENTER_CRITICAL(&s_mux);
-    for (int i = 0; i < AP_TABLE; i++) { s_ap[i].cap_n = 0; s_ap[i].cap_sum = 0; }
+    for (int i = 0; i < AP_TABLE; i++) cap_reset(&s_ap[i]);
     s_cal_end_us = now_us() + (int64_t)BASE_CAPTURE_S * 1000000;
     s_cal_active = true;
     portEXIT_CRITICAL(&s_mux);
@@ -1803,7 +1881,9 @@ void sensing_calibrate_clear(void)
 {
     portENTER_CRITICAL(&s_mux);
     s_cal_active = false;
-    for (int i = 0; i < AP_TABLE; i++) { s_ap[i].base_set = false; s_ap[i].base_has_shape = false; s_ap[i].base_rssi = 0; }
+    for (int i = 0; i < AP_TABLE; i++) {
+        s_ap[i].base_set = false; s_ap[i].base_has_shape = false; s_ap[i].base_rssi = 0; s_ap[i].base_floor = NAN;
+    }
     portEXIT_CRITICAL(&s_mux);
     memset(s_store, 0, sizeof(s_store));
     store_save(s_store);

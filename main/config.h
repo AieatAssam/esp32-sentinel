@@ -11,8 +11,9 @@ typedef struct {
     int led_gpio;             /* 38 or 48 */
     int led_brightness;       /* 0..255 */
     int channel;              /* 0 = auto, else 1..13 */
-    bool use_breathing;       /* default true: show breathing and count it as presence */
-    bool use_baseline;        /* default false: empty-room baseline in presence */
+    bool use_breathing;       /* default false: show breathing and count it as presence */
+    bool use_baseline;        /* default false: empty-room baseline (nearness) in presence */
+    float near_threshold;     /* 0..1; appended last: a blob stored without it still loads */
 } app_config_t;
 
 /* Loads the config from NVS (defaults when absent or invalid). Call after nvs_flash_init(). */
