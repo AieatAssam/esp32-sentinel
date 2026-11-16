@@ -194,8 +194,9 @@ ol.steps li { padding-left: 0.25rem; }
         <h3>Development build (for developers)</h3>
         <p>A secondary build for developers, for test boards only. It enables the developer endpoints:
         the debug log endpoint <code>/api/log</code>, the vendor security-key commands <code>0x51</code>
-        and <code>0x52</code>, and download mode over HTTP without a BOOT hold. Do not use it on a device
-        that holds credentials you need.</p>
+        and <code>0x52</code>, and download mode over HTTP without a BOOT hold. In short, it removes the
+        BOOT-button check for download mode and exposes the device log to anyone who can reach it over HTTP.
+        Do not use it on a device that holds credentials you need.</p>
         <p class="file">Three parts: bootloader at 0x0, partition table at 0x8000, application at 0x20000</p>
         <esp-web-install-button manifest="manifest-dev.json">
           <button slot="activate" class="btn secondary" type="button">Install development build</button>

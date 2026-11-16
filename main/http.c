@@ -148,6 +148,27 @@ static esp_err_t check_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* True if the JSON text nests '[' / '{' at most 6 deep. cJSON parses recursively, so a deeply nested
+ * body could overflow the httpd task stack. Characters inside double-quoted strings are ignored. */
+static bool json_depth_ok(const char *s)
+{
+    int depth = 0;
+    bool in_str = false;
+    for (; *s; s++) {
+        if (in_str) {
+            if (*s == '\\' && s[1]) s++;
+            else if (*s == '"') in_str = false;
+        } else if (*s == '"') {
+            in_str = true;
+        } else if (*s == '[' || *s == '{') {
+            if (++depth > 6) return false;
+        } else if (*s == ']' || *s == '}') {
+            if (depth > 0) depth--;
+        }
+    }
+    return true;
+}
+
 /* Reads the request body into buf (NUL-terminated). Returns ESP_OK or sends an error. */
 static esp_err_t read_body(httpd_req_t *req, char *buf, size_t buf_len)
 {
@@ -213,7 +234,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     if (read_body(req, body, sizeof(body)) != ESP_OK) {
         return ESP_FAIL;
     }
-    cJSON *in = cJSON_Parse(body);
+    cJSON *in = json_depth_ok(body) ? cJSON_Parse(body) : NULL;
     if (!in || !cJSON_IsObject(in)) {
         cJSON_Delete(in);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid json object");
@@ -420,7 +441,11 @@ static esp_err_t calibrate_handler(httpd_req_t *req)
     if (!rate_ok(&last, WRITE_MIN_US)) return too_many(req);
     char query[32] = {0};
     char val[4] = {0};
-    bool clear = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+    esp_err_t qe = httpd_req_get_url_query_str(req, query, sizeof(query));
+    if (qe != ESP_OK && qe != ESP_ERR_NOT_FOUND) {      /* e.g. query longer than the buffer */
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "query too long");
+    }
+    bool clear = qe == ESP_OK &&
                  httpd_query_key_value(query, "clear", val, sizeof(val)) == ESP_OK &&
                  strcmp(val, "1") == 0;
     cJSON *root = cJSON_CreateObject();
@@ -887,7 +912,7 @@ static esp_err_t fido_harden_handler(httpd_req_t *req)
     }
     /* Exactly {"confirm":"BURN"} and nothing else. */
     bool ok = false;
-    cJSON *j = cJSON_Parse(body);
+    cJSON *j = json_depth_ok(body) ? cJSON_Parse(body) : NULL;
     if (j) {
         cJSON *c = cJSON_GetObjectItemCaseSensitive(j, "confirm");
         ok = cJSON_IsString(c) && strcmp(c->valuestring, "BURN") == 0 && cJSON_GetArraySize(j) == 1;
@@ -966,7 +991,7 @@ static esp_err_t wifi_post_handler(httpd_req_t *req)
     if (read_body(req, body, sizeof(body)) != ESP_OK) {
         return ESP_FAIL;
     }
-    cJSON *in = cJSON_Parse(body);
+    cJSON *in = json_depth_ok(body) ? cJSON_Parse(body) : NULL;
     if (!in || !cJSON_IsObject(in)) {
         cJSON_Delete(in);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid json object");
@@ -976,6 +1001,10 @@ static esp_err_t wifi_post_handler(httpd_req_t *req)
     if (!cJSON_IsString(ss) || !ss->valuestring || strlen(ss->valuestring) < 1 || strlen(ss->valuestring) > 32) {
         cJSON_Delete(in);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid must be 1..32 bytes");
+    }
+    if (ps && !cJSON_IsString(ps)) {
+        cJSON_Delete(in);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "wrong field type");
     }
     const char *pass = cJSON_IsString(ps) && ps->valuestring ? ps->valuestring : "";
     size_t pl = strlen(pass);

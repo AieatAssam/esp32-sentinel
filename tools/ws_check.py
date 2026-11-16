@@ -152,8 +152,11 @@ async def run(seconds):
             aps_n.append(len(f.get("aps", [])))
             motion.append(f.get("motion", 0.0))
             for a in f.get("aps", []):
-                rate_sum[a["id"]] = rate_sum.get(a["id"], 0.0) + a["rate"]
-                rate_n[a["id"]] = rate_n.get(a["id"], 0) + 1
+                if not isinstance(a, dict):
+                    continue
+                if "id" in a and isinstance(a.get("rate"), (int, float)):
+                    rate_sum[a["id"]] = rate_sum.get(a["id"], 0.0) + a["rate"]
+                    rate_n[a["id"]] = rate_n.get(a["id"], 0) + 1
                 if a.get("flag"):
                     flags[a["flag"]] = flags.get(a["flag"], 0) + 1
             for d in f.get("ble", []):
@@ -179,10 +182,12 @@ async def run(seconds):
         print("AP count: min %d mean %.1f max %d" % (min(aps_n), statistics.mean(aps_n), max(aps_n)))
     for ap_id in sorted(rate_sum):
         print("  AP %s mean CSI rate %.2f/s (in %d frames)" % (ap_id, rate_sum[ap_id] / rate_n[ap_id], rate_n[ap_id]))
-    if motion:
+    if len(motion) >= 2:
         q = statistics.quantiles(motion, n=10)
         print("motion: min %.3f p10 %.3f median %.3f p90 %.3f max %.3f mean %.3f"
               % (min(motion), q[0], statistics.median(motion), q[8], max(motion), statistics.mean(motion)))
+    elif motion:
+        print("motion: %.3f (one frame)" % motion[0])
     if breath:
         bpms = [b for b, _ in breath]
         confs = [c for _, c in breath]

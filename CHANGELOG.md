@@ -25,6 +25,14 @@ All notable changes to this project are recorded here. The format is based on
 
 ### Fixed
 
+- Release builds: a second crash loop while in safe mode no longer reboots into ROM download
+  mode. It stays in safe mode; download mode in release still needs a physical BOOT hold.
+- Boot no longer erases NVS when `nvs_flash_init` reports no free pages or a new NVS version.
+  It logs the error and continues without settings and FIDO; reflashing with erase recovers.
+- A missing or damaged FIDO master secret is regenerated only when the `fido` namespace holds
+  nothing else. Otherwise FIDO is disabled with an error instead of orphaning every passkey.
+- FIDO hardening re-saves the PIN under the new master even if erasing resident credentials
+  fails, so the PIN is no longer blocked on the next boot.
 - Internal RAM exhaustion. Steady state (joined, BLE scanning, four WebSocket clients) had
   about 7 KB of internal RAM free and 23 bytes at its lowest, and WebSocket handshakes
   failed ("Failed to setup SHA-1"). Large static tables and buffers,

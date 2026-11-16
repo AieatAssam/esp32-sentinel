@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Flashes the built firmware: bootloader, partition table, app.
-# Requires a verified backup unless FORCE_NO_BACKUP=1 is set.
+# Requires a non-empty backup file and RESTORE.md (contents not checksummed) unless FORCE_NO_BACKUP=1 is set.
 #
 # Usage: [BUILD=dir] tools/flash.sh [PORT]
 #   PORT defaults to the first /dev/cu.usbmodem* device.
@@ -47,8 +47,14 @@ wait_port() {   # wait_port SECONDS
     return 1
 }
 
-PORT="${1:-}"
-[ -n "$PORT" ] || PORT="$(port_now)"
+PORT="${1:-${PORT:-}}"
+if [ -z "$PORT" ]; then
+    ports=(/dev/cu.usbmodem*)
+    if [ -e "${ports[0]}" ] && [ "${#ports[@]}" -gt 1 ]; then
+        die "${#ports[@]} /dev/cu.usbmodem* devices found. Set PORT=/dev/cu.usbmodemXXXX (or pass it as the first argument)."
+    fi
+    PORT="$(port_now)"
+fi
 if [ -n "$PORT" ]; then
     echo "download port $PORT already present"
 else

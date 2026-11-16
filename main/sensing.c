@@ -482,7 +482,8 @@ static bool beacon_parse(const uint8_t *f, int len, char *out)
             have_ssid = true;
         } else if (id == 48) {
             prot = true;
-        } else if (id == 221 && l >= 4 && f[pos + 2] == 0x00 && f[pos + 3] == 0x50 && f[pos + 4] == 0xF2) {
+        } else if (id == 221 && l >= 4 && f[pos + 2] == 0x00 && f[pos + 3] == 0x50 && f[pos + 4] == 0xF2 &&
+                   f[pos + 5] == 0x01) {        /* type 1 only: WMM (2) and WPS (4) share the OUI */
             prot = true;                    /* WPA1 */
         }
         pos += 2 + l;
@@ -743,7 +744,7 @@ static int ble_gap_cb(struct ble_gap_event *ev, void *arg)
         for (int i = 0; i < BLE_TABLE && !e; i++) if (!s_ble[i].used) e = &s_ble[i];
         /* Full: evict the least recently seen ordinary device. Trackers are never evicted by
          * ordinary adverts; a tracker may only displace the least recent tracker. */
-        for (int i = 0; i < BLE_TABLE && !e; i++) {
+        if (!e) for (int i = 0; i < BLE_TABLE; i++) {
             if (s_ble[i].kind) continue;
             if (!e || s_ble[i].last_us < e->last_us) e = &s_ble[i];
         }

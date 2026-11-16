@@ -173,9 +173,9 @@ size_t logbuf_read(char *out, size_t cap)
     portENTER_CRITICAL(&s_mux);
     size_t n = s_count < cap ? s_count : cap;
     size_t start = (s_head + LOGBUF_SIZE - n) % LOGBUF_SIZE;
-    for (size_t i = 0; i < n; i++) {
-        out[i] = s_ring[(start + i) % LOGBUF_SIZE];
-    }
+    size_t first = n < LOGBUF_SIZE - start ? n : LOGBUF_SIZE - start;   /* up to the end of the ring */
+    memcpy(out, &s_ring[start], first);
+    memcpy(out + first, s_ring, n - first);                             /* wrapped part */
     portEXIT_CRITICAL(&s_mux);
     return n;
 }

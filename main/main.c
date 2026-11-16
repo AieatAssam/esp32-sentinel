@@ -38,14 +38,15 @@ void app_main(void)
 {
     logbuf_init();
     MEM("start");
-    /* Before anything else: a crash loop drops into download mode here. */
+    /* Before anything else: a crash loop enters safe mode here (release) or download mode (dev). */
     recovery_check_on_boot();
 
+    /* NVS holds the FIDO master secret, passkeys and PIN: never erase it automatically. */
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "nvs partition needs erase, erasing nvs only");
-        STEP(nvs_flash_erase());
-        err = nvs_flash_init();
+        ESP_LOGE(TAG, "NVS could not be opened (%s); nothing was erased. Settings and FIDO are unavailable. "
+                      "To recover, reflash with erase (browser flasher), which deletes all passkeys.",
+                 esp_err_to_name(err));
     }
     STEP(err);
 

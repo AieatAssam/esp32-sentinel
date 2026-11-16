@@ -121,7 +121,8 @@ exposure (see below).
     random key to it, with purpose `HMAC_UP`. The master key is then derived by the HMAC
     peripheral and not stored in flash;
   - erases resident credentials (`store_harden()`);
-  - re-saves the PIN after `store_harden()` runs (`ctap2_harden()`).
+  - re-saves the PIN after `store_harden()` runs (`ctap2_harden()`), also when erasing
+    resident credentials failed.
 
 The eFuse burn is irreversible. No command in this repository reverses it. Back up what
 you need first. Once hardening is done, treat the credentials on the device as lost if

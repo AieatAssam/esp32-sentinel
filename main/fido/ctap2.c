@@ -1598,8 +1598,13 @@ esp_err_t ctap2_reset_state(void)
 /* The PIN record is keyed from the effective master, which harden changes: re-save it under the new keys. */
 esp_err_t ctap2_harden(void)
 {
+    bool was = store_is_hardened();
     esp_err_t err = store_harden();
-    if (err == ESP_OK) err = pin_save();
+    /* Once the master changed, re-save even if erasing residents failed, or the PIN is blocked on boot. */
+    if (!was && store_is_hardened()) {
+        esp_err_t perr = pin_save();
+        if (err == ESP_OK) err = perr;
+    }
     return err;
 }
 

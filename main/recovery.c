@@ -78,18 +78,16 @@ void recovery_check_on_boot(void)
 
     if (s_abnormal_count >= ABNORMAL_LIMIT) {
         s_abnormal_count = 0;
-#if !CONFIG_DEV_BACKDOOR
-        if (s_safe != SAFE_MAGIC) {
-            /* Release: stay reachable (dashboard, FIDO) with the radio off rather than leave the
-             * ROM download port open to whatever is plugged in. */
-            s_safe = SAFE_MAGIC;
-            ESP_LOGE(TAG, "crash loop detected, safe mode: sensing off");
-        } else
+#if CONFIG_DEV_BACKDOOR
+        ESP_LOGE(TAG, "crash loop detected, entering download mode");
+        recovery_reboot(true);
+#else
+        /* Release: stay reachable (dashboard, FIDO) with the radio off rather than leave the
+         * ROM download port open to whatever is plugged in. A crash loop that safe mode does not
+         * stop stays in safe mode; download mode needs a physical BOOT hold. */
+        s_safe = SAFE_MAGIC;
+        ESP_LOGE(TAG, "crash loop detected, safe mode: sensing off");
 #endif
-        {
-            ESP_LOGE(TAG, "crash loop detected, entering download mode");
-            recovery_reboot(true);
-        }
     }
     if (s_safe == SAFE_MAGIC) ESP_LOGW(TAG, "safe mode: sensing off until reboot");
 

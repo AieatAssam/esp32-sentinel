@@ -46,7 +46,7 @@ const APS = [
   ['Printer-DIRECT', 9, -58], ['IoT-Bulb', 3, -67], ['Office_2G', 6, -49],
   ['Guest', 4, -77], ['TVHub', 7, -69], ['Router_mesh', 11, -55],
   ['LightBridge', 2, -80], ['', 8, -74], ['Cabin-AP', 5, -62],
-].map(([ssid, ch, base], i) => [ssid, ch, base, `f8:0${hex(i, 1)}:4c:21:9a:${hex(i * 17 + 3)}`]);
+].map(([ssid, ch, base], i) => [ssid, ch, base, `02:0${hex(i, 1)}:4c:21:9a:${hex(i * 17 + 3)}`]);
 
 // Flagged links when alerts are on: a twin network and a deauth flood.
 const AP_FLAG = { CoffeeWifi: 'twin', Guest: 'deauth' };

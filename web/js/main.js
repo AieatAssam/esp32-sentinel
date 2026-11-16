@@ -42,6 +42,7 @@ const ADV_KEY = 's3s.advanced';
 
 let cfg = null, selId = null, lastFrame = null, shownFrame = null, scene = null;
 let alertKey = '', keyText = '', watching = false;
+let cfgTimer = 0, wifiTimer = 0, seenLive = false;
 const rows = new Map();
 const flashTimers = new Map();
 
@@ -58,6 +59,14 @@ const fmtBytes = (x) => (Number.isFinite(x) ? (x >= 1048576 ? (x / 1048576).toFi
 function setConn(state) {
   E.conn.dataset.state = state;
   E.connText.textContent = CONN[state] || 'Connecting';
+}
+
+// After the first connection, a new live link means the device may have restarted: re-read its state.
+function onConn(state) {
+  setConn(state);
+  if (state !== 'live') return;
+  if (seenLive) { loadCfg(); loadWifi(); refreshFido(); }
+  seenLive = true;
 }
 
 // Per-control feedback beside the control. Saved clears itself after two seconds.
@@ -273,9 +282,9 @@ setInterval(() => {
 
 function outputs() {
   if (!cfg) return;
-  const thr = +cfg.motion_threshold;
+  const thr = +$('#c_motion_threshold').value;
   $('#o_motion_threshold').textContent = thr.toFixed(2);
-  $('#o_led_brightness').textContent = String(cfg.led_brightness);
+  $('#o_led_brightness').textContent = $('#c_led_brightness').value;
   if (lastFrame) renderHud(lastFrame);
 }
 
@@ -292,17 +301,19 @@ function applyCfg(c, force = false) {
 }
 
 async function loadCfg() {
+  clearTimeout(cfgTimer);
   try { applyCfg(await api('GET', '/api/config'), true); }
-  catch (e) { flash('autolock', 'Settings unavailable, retrying', true); setTimeout(loadCfg, 4000); }
+  catch (e) { flash('autolock', 'Settings unavailable, retrying', true); cfgTimer = setTimeout(loadCfg, 4000); }
 }
 
 async function saveField(k) {
   const el = fieldEl(k);
   if (!el.checkValidity()) { flash(k, 'Out of range', true); return; }
+  if (el.type === 'number' && el.value === '') { flash(k, 'Enter a number', true); return; }
   const v = el.type === 'checkbox' ? el.checked : NUM.has(k) ? Number(el.value) : el.value;
   flash(k, 'Saving');
   try { applyCfg(await api('POST', '/api/config', { [k]: v })); flash(k, 'Saved'); }
-  catch (e) { flash(k, 'Not saved: ' + e.message, true); }
+  catch (e) { flash(k, 'Not saved: ' + e.message, true); if (cfg) applyCfg(cfg, true); }
 }
 
 async function doAct(method, path, okMsg, statusEl = E.actStatus) {
@@ -414,14 +425,16 @@ async function watchWifi() {
 }
 
 async function loadWifi() {
+  clearTimeout(wifiTimer);
   try {
     const w = await api('GET', '/api/wifi');
-    renderWifi(w);
+    renderWifi(w);   // also re-enables Join unless a join is in progress
     if (w.state === 'connecting') watchWifi();
   } catch {
     E.wState.textContent = 'Wi-Fi status unavailable.';
     E.wState.dataset.state = 'off';
     E.wJoin.disabled = true;
+    wifiTimer = setTimeout(loadWifi, 4000);
   }
 }
 
@@ -455,7 +468,7 @@ async function boot() {
   } catch (e) {
     E.wfLabel.textContent = 'WebGL unavailable: ' + e.message;
   }
-  connect({ onFrame, onStatus: setConn });
+  connect({ onFrame, onStatus: onConn });
 
   for (const k of FIELDS) {
     const el = fieldEl(k);

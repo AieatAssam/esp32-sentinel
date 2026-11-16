@@ -18,6 +18,21 @@ static esp_efuse_block_t s_hw_blk;
 static uint32_t s_resident;
 static bool s_ready;
 
+/* True if the namespace holds any key besides "msec" (PIN, counter, residents), or cannot be listed. */
+static bool other_keys_present(void)
+{
+    nvs_iterator_t it = NULL;
+    bool other = false;
+    esp_err_t e = nvs_entry_find(NVS_DEFAULT_PART_NAME, NS, NVS_TYPE_ANY, &it);
+    while (e == ESP_OK && !other) {
+        nvs_entry_info_t info;
+        other = nvs_entry_info(it, &info) != ESP_OK || strcmp(info.key, "msec") != 0;
+        if (!other) e = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+    return other || (e != ESP_OK && e != ESP_ERR_NVS_NOT_FOUND);
+}
+
 static esp_err_t load_master(void)
 {
     nvs_handle_t h;
@@ -26,6 +41,13 @@ static esp_err_t load_master(void)
     size_t len = sizeof(s_master);
     err = nvs_get_blob(h, "msec", s_master, &len);
     if (err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && len != sizeof(s_master))) {
+        /* A new master would orphan every existing credential and the PIN: only on an empty store. */
+        if (other_keys_present()) {
+            ESP_LOGE(TAG, "master secret missing or damaged but FIDO records exist; nothing written. "
+                          "FIDO reset (BOOT press) then reboot recovers, deleting all passkeys.");
+            nvs_close(h);
+            return ESP_ERR_INVALID_STATE;
+        }
         cred_rng(s_master, sizeof(s_master));
         err = nvs_set_blob(h, "msec", s_master, sizeof(s_master));
         if (err == ESP_OK) err = nvs_commit(h);
@@ -182,7 +204,7 @@ esp_err_t store_reset(void)
 
 esp_err_t store_harden(void)
 {
-    if (s_hardened) return ESP_ERR_INVALID_STATE;
+    if (s_hardened || !s_ready) return ESP_ERR_INVALID_STATE;   /* never burn a key for a store that did not start */
     esp_efuse_block_t blk = EFUSE_BLK_KEY0;
     bool found = false;
     for (; blk <= EFUSE_BLK_KEY5; blk++) {
