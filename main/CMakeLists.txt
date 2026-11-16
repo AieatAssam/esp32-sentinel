@@ -64,6 +64,16 @@ idf_component_register(
          "${C_FILE}" "${ASM_FILE}"
     INCLUDE_DIRS "." "fido"
     REQUIRES nvs_flash esp_netif esp_wifi bt esp_http_server esp_timer esp_driver_gpio
-             led_strip esp_tinyusb cjson lwip cbor mbedtls efuse esp_security esp_driver_tsens esp_mm)
+             led_strip esp_tinyusb cjson lwip cbor mbedtls efuse esp_security esp_driver_tsens esp_mm spi_flash)
 
 set_source_files_properties("${ASM_FILE}" PROPERTIES OBJECT_DEPENDS "${GZ_FILES}")
+
+# Wi-Fi driver CSI length bug workaround (main/sensing.c, __wrap_esf_buf_alloc).
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esf_buf_alloc")
+
+# Dev only: copy panic output into the log ring (main/logbuf.c).
+if(CONFIG_DEV_BACKDOOR)
+    foreach(f esp_panic_handler panic_print_str panic_print_char panic_print_hex panic_print_dec)
+        target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=${f}")
+    endforeach()
+endif()

@@ -93,11 +93,16 @@ Everything else large lives in PSRAM:
 
 `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` stays off: Wi-Fi and lwIP buffers belong in internal
 RAM. Before this split, internal free RAM at steady state (joined, BLE scanning, four
-WebSocket clients) was about 7 KB, with a minimum of 23 bytes since boot. `malloc` then fell
-back to PSRAM for Wi-Fi RX buffers, and the wifi task crashed copying a frame into one
-(CacheError in `wDev_IndicateFrame`). WebSocket handshakes also failed ("Failed to setup
-SHA-1"). After the split, steady-state internal free RAM was about 135 KB (see the
+WebSocket clients) was about 7 KB, with a minimum of 23 bytes since boot, and WebSocket
+handshakes failed ("Failed to setup SHA-1"). After the split, steady-state internal free RAM was about 135 KB (see the
 CHANGELOG for the measured figures).
+
+A CacheError in `wDev_IndicateFrame` seen at the time was not caused by memory pressure: it is
+a Wi-Fi driver bug in the CSI receive path, worked around in `main/sensing.c`
+(`__wrap_esf_buf_alloc`, see the comment there). Its runaway copy lands wherever the frame
+buffer is: in PSRAM it ended as a CacheError panic with a core dump; in internal RAM it can
+also wreck the panic handler, which then hangs until the RTC watchdog resets with reason "wdt"
+and no core dump. Dev builds copy panic output into the log ring (`main/logbuf.c`) for that case.
 
 `GET /api/status` reports `int_free`, `int_min` (lowest since boot), `int_largest` and
 `dma_free`. The dashboard shows `int_free` as "Free internal RAM". `heap` and `heap_free`

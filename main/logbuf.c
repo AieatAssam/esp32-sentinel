@@ -74,6 +74,72 @@ static int ring_vprintf(const char *fmt, va_list ap)
     return r;
 }
 
+#if CONFIG_DEV_BACKDOOR
+/* Dev only: panic output also goes into the ring (main/CMakeLists.txt wraps panic_print_*), so a panic
+ * whose handler then hangs until its RTC watchdog (reset reason "wdt", no coredump) still leaves the
+ * reason and backtrace in /api/log. Lock-free and written straight back: the other core is stalled. */
+#include "esp_private/cache_utils.h"
+#include "esp_private/panic_internal.h"
+#include "esp_rom_sys.h"
+#include "esp32s3/rom/cache.h"
+
+static bool s_panicking;
+
+static void IRAM_ATTR panic_put(const char *p, size_t n)
+{
+    if (!spi_flash_cache_enabled()) return;
+    s_panicking = true;
+    size_t from = s_head;
+    for (size_t i = 0; i < n; i++) {
+        s_ring[s_head] = p[i];
+        s_head = (s_head + 1) % LOGBUF_SIZE;
+    }
+    s_count = (s_count + n > LOGBUF_SIZE) ? LOGBUF_SIZE : s_count + n;
+    Cache_WriteBack_Addr((uint32_t)&s_lb, offsetof(typeof(s_lb), ring));
+    Cache_WriteBack_Addr(from + n <= LOGBUF_SIZE ? (uint32_t)&s_ring[from] : (uint32_t)s_ring,
+                         from + n <= LOGBUF_SIZE ? n : LOGBUF_SIZE);
+}
+
+void __real_panic_print_str(const char *s);
+void __real_panic_print_char(char c);
+void __real_panic_print_hex(int h);
+void __real_panic_print_dec(int d);
+void IRAM_ATTR __wrap_panic_print_str(const char *s) { __real_panic_print_str(s); panic_put(s, strlen(s)); }
+void IRAM_ATTR __wrap_panic_print_char(char c) { __real_panic_print_char(c); panic_put(&c, 1); }
+static void IRAM_ATTR panic_put_hex(int h)
+{
+    char b[8];
+    for (int i = 0; i < 8; i++) {
+        int v = (h >> (28 - 4 * i)) & 0xf;
+        b[i] = (char)(v < 10 ? '0' + v : 'a' + v - 10);
+    }
+    panic_put(b, 8);
+}
+void IRAM_ATTR __wrap_panic_print_hex(int h) { __real_panic_print_hex(h); panic_put_hex(h); }
+void IRAM_ATTR __wrap_panic_print_dec(int d)
+{
+    __real_panic_print_dec(d);
+    char b[2] = {(char)(d >= 10 ? '0' + d / 10 % 10 : ' '), (char)('0' + d % 10)};
+    panic_put(b, 2);
+}
+/* esp_panic_handler prints the reason from inside panic.c, which --wrap cannot see: record it here. */
+void __real_esp_panic_handler(panic_info_t *info);
+void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
+{
+    const char *parts[] = {"\n=== PANIC: ", info->reason, " (", info->description, ") ",
+                           g_panic_abort_details, " at "};
+    for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+        if (parts[i]) panic_put(parts[i], strlen(parts[i]));
+    }
+    panic_put_hex((int)(intptr_t)info->addr);
+    panic_put("\n", 1);
+    __real_esp_panic_handler(info);
+}
+
+/* esp_rom_printf (core dump progress, "Rebooting...") once a panic has started. */
+static void IRAM_ATTR rom_putc(char c) { if (s_panicking) panic_put(&c, 1); }
+#endif
+
 void logbuf_init(void)
 {
     if (s_lb.magic != LOGBUF_MAGIC || s_head >= LOGBUF_SIZE || s_count > LOGBUF_SIZE) {
@@ -86,6 +152,9 @@ void logbuf_init(void)
     }
     s_fmt_lock = xSemaphoreCreateMutexStatic(&s_fmt_lock_buf);
     s_console = esp_log_set_vprintf(ring_vprintf);
+#if CONFIG_DEV_BACKDOOR
+    esp_rom_install_channel_putc(2, rom_putc);
+#endif
 }
 
 size_t logbuf_read(char *out, size_t cap)

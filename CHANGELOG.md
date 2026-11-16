@@ -26,15 +26,22 @@ All notable changes to this project are recorded here. The format is based on
 ### Fixed
 
 - Internal RAM exhaustion. Steady state (joined, BLE scanning, four WebSocket clients) had
-  about 7 KB of internal RAM free and 23 bytes at its lowest. Wi-Fi RX buffers then spilled
-  into PSRAM and the wifi task crashed (CacheError in `wDev_IndicateFrame`) within minutes;
-  WebSocket handshakes failed ("Failed to setup SHA-1"). Large static tables and buffers,
+  about 7 KB of internal RAM free and 23 bytes at its lowest, and WebSocket handshakes
+  failed ("Failed to setup SHA-1"). Large static tables and buffers,
   the log ring and the NimBLE host pools moved to PSRAM: steady state is now about 135 KB
   free, at least 40 KB at its lowest over 30 to 40-minute soaks. See docs/ARCHITECTURE.md, Memory.
+- Wi-Fi task crash, seen as a CacheError panic in `wDev_IndicateFrame` or as a "wdt" reset
+  with no core dump, about once an hour. With CSI on, the Wi-Fi driver (IDF v6.0.1 libpp)
+  copies a received frame as `len - 44 - csi_len` bytes without a check; a buffer no longer
+  than its own CSI makes that wrap to about 4 GB. Present before the memory change too. The
+  firmware now wraps `esf_buf_alloc` and refuses the buffers for such a frame, so the driver discards
+  the frame; dev builds count these as `bad_len` in the "stat csi" log line.
 - The HTTP server no longer locks up when clients hold idle connections or stop reading the
   WebSocket.
 - The log ring (64 KB, PSRAM) survives a panic or watchdog reset, so `/api/log` on a
-  development build shows the lines before it.
+  development build shows the lines before it. Dev builds also copy panic output (reason,
+  registers, backtrace, core dump progress) into the ring, so a panic whose handler hangs until
+  the RTC watchdog still explains itself.
 
 ### Known limitations
 

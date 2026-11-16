@@ -334,6 +334,32 @@ size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped)
 }
 #endif
 
+/* Workaround for a Wi-Fi driver (libpp, IDF v6.0.1) bug. With CSI on, wDev_IndicateFrame copies an RX
+ * frame as len - 44 - csi_len bytes, unchecked. Some received buffers are no longer than their own CSI
+ * (seen: len 128 with 128 bytes of CSI), so the copy length wraps to ~4 GB and the runaway memcpy
+ * crashes the wifi task (CacheError panic, or "wdt" when it tramples the panic handler's RAM).
+ * main/CMakeLists.txt wraps esf_buf_alloc. For such a frame we refuse wDev_IndicateFrame's
+ * allocations: a refused small (type 8) buffer falls back to a large (type 7) one, and a refused large
+ * one takes the driver's own allocation-failure path, which discards the frame. This relies on this
+ * driver build's layout: wDevCtrl's first word points at the RX descriptor, whose word 0 holds the
+ * length in bits 12-23 and word 1 the buffer. Re-check (disassemble wDev_IndicateFrame) on IDF updates. */
+extern void wDev_IndicateFrame(void);
+extern uint32_t *wDevCtrl; /* first word of the driver's struct: the current RX descriptor */
+uint32_t wdev_csi_len_align(void *buf);
+void *__real_esf_buf_alloc(void *ref, uint32_t type, uint32_t len);
+static volatile uint32_t s_csi_bad;
+
+void *IRAM_ATTR __wrap_esf_buf_alloc(void *ref, uint32_t type, uint32_t len)
+{
+    uint32_t ra = ((uint32_t)__builtin_return_address(0) & 0x3fffffff) | 0x40000000;
+    if (ra - (uint32_t)wDev_IndicateFrame < 0x22a &&
+        ((wDevCtrl[0] >> 12) & 0xfff) <= 44 + wdev_csi_len_align((void *)wDevCtrl[1])) {
+        if (type == 7) s_csi_bad++; /* the last refusal: the frame is discarded */
+        return NULL;
+    }
+    return __real_esf_buf_alloc(ref, type, len);
+}
+
 static void csi_cb(void *ctx, wifi_csi_info_t *info)
 {
     (void)ctx;
@@ -1208,8 +1234,9 @@ static void stats_log(void)
         n++;
     }
     portEXIT_CRITICAL(&s_mux);
-    STAT_LOG(TAG, "stat csi total=%u attributed=%u unattr=%u uplink=%u beacons=%u aps=%d",
-             (unsigned)ct, (unsigned)(ct - cu), (unsigned)cu, (unsigned)ul, (unsigned)bc, n);
+    STAT_LOG(TAG, "stat csi total=%u attributed=%u unattr=%u uplink=%u beacons=%u aps=%d bad_len=%u",
+             (unsigned)ct, (unsigned)(ct - cu), (unsigned)cu, (unsigned)ul, (unsigned)bc, n,
+             (unsigned)s_csi_bad);
     STAT_LOG(TAG, "stat ping tx=%u rx=%u (5 s)", (unsigned)ptx, (unsigned)prx);
     for (int i = 0; i < n; i++) {
         STAT_LOG(TAG, "stat ap %02x%02x%02x%02x%02x%02x dl=%u ul=%u beacons=%u fps=%.2f", mac[i][0], mac[i][1],
