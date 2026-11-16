@@ -80,6 +80,7 @@ static int ring_vprintf(const char *fmt, va_list ap)
  * reason and backtrace in /api/log. Lock-free and written straight back: the other core is stalled. */
 #include "esp_private/cache_utils.h"
 #include "esp_private/panic_internal.h"
+#include "xtensa_context.h"
 #include "esp_rom_sys.h"
 #include "esp32s3/rom/cache.h"
 
@@ -132,6 +133,16 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
         if (parts[i]) panic_put(parts[i], strlen(parts[i]));
     }
     panic_put_hex((int)(intptr_t)info->addr);
+    /* The registers now, in case the handler hangs before its own dump: core, PC, A0, SP,
+     * EXCCAUSE, EXCVADDR, then the 4 words below SP (the caller's spilled A0-A3). */
+    const XtExcFrame *f = info->frame;
+    int regs[] = {info->core, f->pc, f->a0, f->a1, f->exccause, f->excvaddr};
+    panic_put("\nregs core/pc/a0/sp/cause/vaddr:", 32);
+    for (size_t i = 0; i < 6; i++) { panic_put(" ", 1); panic_put_hex(regs[i]); }
+    if (f->a1 >= 0x3fc88010 && f->a1 < 0x3fd00000) {
+        panic_put(" below-sp:", 10);
+        for (int i = 4; i > 0; i--) { panic_put(" ", 1); panic_put_hex(((int *)f->a1)[-i]); }
+    }
     panic_put("\n", 1);
     __real_esp_panic_handler(info);
 }
