@@ -1,6 +1,10 @@
+#include "esp_attr.h"
+#include "esp_cache.h"
 #include "logbuf.h"
 
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
@@ -9,9 +13,18 @@
 
 #define LOGBUF_LINE    256
 
-static char s_ring[LOGBUF_SIZE];
-static size_t s_head;     /* next write position */
-static size_t s_count;    /* bytes stored, capped at LOGBUF_SIZE */
+/* PSRAM no-init, written only from task context: the ring survives a panic or watchdog reset (not a
+ * power cycle), so GET /api/log after such a reset still shows what led up to it. */
+#define LOGBUF_MAGIC 0x4c4f4721u
+static EXT_RAM_NOINIT_ATTR struct {
+    uint32_t magic;
+    size_t head;          /* next write position */
+    size_t count;         /* bytes stored, capped at LOGBUF_SIZE */
+    char ring[LOGBUF_SIZE];
+} s_lb;
+#define s_ring  s_lb.ring
+#define s_head  s_lb.head
+#define s_count s_lb.count
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static vprintf_like_t s_console;
 static SemaphoreHandle_t s_fmt_lock;      /* guards s_line: one formatter at a time */
@@ -29,6 +42,17 @@ static void ring_put(const char *p, size_t n)
     portEXIT_CRITICAL(&s_mux);
 }
 
+/* Write the header and the new bytes back from the data cache to PSRAM. A watchdog or hung-panic reset
+ * does not flush the cache, and without this the last lines before it come back as holes of NULs. */
+static void ring_sync(size_t from, size_t n)
+{
+    const int f = ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED;
+    esp_cache_msync(&s_lb, offsetof(typeof(s_lb), ring), f);
+    size_t first = n < LOGBUF_SIZE - from ? n : LOGBUF_SIZE - from;
+    esp_cache_msync(&s_ring[from], first, f);
+    if (n > first) esp_cache_msync(s_ring, n - first, f);
+}
+
 static int ring_vprintf(const char *fmt, va_list ap)
 {
     va_list copy;
@@ -39,7 +63,11 @@ static int ring_vprintf(const char *fmt, va_list ap)
      * the line for over 10 ms, the line reaches the console only. */
     if (s_fmt_lock && xPortCanYield() && xSemaphoreTake(s_fmt_lock, pdMS_TO_TICKS(10)) == pdTRUE) {
         int n = vsnprintf(s_line, sizeof(s_line), fmt, copy);
-        if (n > 0) ring_put(s_line, (size_t)n < sizeof(s_line) ? (size_t)n : sizeof(s_line) - 1);
+        if (n > 0) {
+            size_t len = (size_t)n < sizeof(s_line) ? (size_t)n : sizeof(s_line) - 1, from = s_head;
+            ring_put(s_line, len);
+            ring_sync(from, len);   /* s_head moves only under s_fmt_lock, so from..len is ours */
+        }
         xSemaphoreGive(s_fmt_lock);
     }
     va_end(copy);
@@ -48,6 +76,14 @@ static int ring_vprintf(const char *fmt, va_list ap)
 
 void logbuf_init(void)
 {
+    if (s_lb.magic != LOGBUF_MAGIC || s_head >= LOGBUF_SIZE || s_count > LOGBUF_SIZE) {
+        s_lb.magic = LOGBUF_MAGIC;
+        s_head = s_count = 0;
+    } else {
+        size_t from = s_head;
+        ring_put("\n--- reset; lines above are from before it ---\n", 47);
+        ring_sync(from, 47);
+    }
     s_fmt_lock = xSemaphoreCreateMutexStatic(&s_fmt_lock_buf);
     s_console = esp_log_set_vprintf(ring_vprintf);
 }

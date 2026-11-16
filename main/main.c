@@ -1,6 +1,7 @@
 #include "config.h"
 #include "esp_err.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "fido/fido.h"
@@ -15,6 +16,16 @@
 
 static const char *TAG = "main";
 
+#if CONFIG_DEV_BACKDOOR
+/* Dev only: internal RAM left after each init step, read back with GET /api/log. */
+#define MEM(what) ESP_LOGI(TAG, "mem after %s: internal %u, largest %u, dma %u", what,                     \
+                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),                          \
+                           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),                 \
+                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL))
+#else
+#define MEM(what) ((void)0)
+#endif
+
 /* After recovery_check_on_boot() nothing may abort the boot: log the error and go on,
  * so the device stays reachable over HTTP and the crash-loop guard sees a healthy path. */
 #define STEP(call)                                                        \
@@ -26,6 +37,7 @@ static const char *TAG = "main";
 void app_main(void)
 {
     logbuf_init();
+    MEM("start");
     /* Before anything else: a crash loop drops into download mode here. */
     recovery_check_on_boot();
 
@@ -38,16 +50,23 @@ void app_main(void)
     STEP(err);
 
     STEP(config_init());
+    MEM("config");
     led_set_mode(LED_BOOT);
 
     STEP(esp_netif_init());
     STEP(esp_event_loop_create_default());
+    MEM("netif/event");
     STEP(net_init());
+    MEM("net");
     STEP(usb_init());
+    MEM("usb");
     STEP(http_start());
+    MEM("http");
 
     fido_init();
+    MEM("fido");
     sensing_start();
+    MEM("sensing");
     led_set_mode(LED_PRESENT);
     ESP_LOGI(TAG, "boot complete");
 }

@@ -1,4 +1,5 @@
 #include <string.h>
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -24,7 +25,7 @@ typedef struct {
     uint8_t buf[CTAPHID_MAX_MSG];
 } asm_t;
 
-static asm_t s_asm;
+static EXT_RAM_BSS_ATTR asm_t s_asm;     /* PSRAM: wire data only, task context */
 
 /* Allocated channels. Random ids; the least recently used is dropped when a new one is needed. */
 #define MAX_CHANNELS 8

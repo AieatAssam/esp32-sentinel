@@ -316,7 +316,7 @@ async function pollStatus() {
     E.fw.textContent = 'Firmware ' + (s.fw ?? 'unknown');
     E.dv.fw.textContent = s.fw ?? 'Unknown';
     E.dv.uptime.textContent = Number.isFinite(s.uptime_s ?? s.uptime) ? fmtUp(s.uptime_s ?? s.uptime) : 'Unknown';
-    E.dv.heap.textContent = fmtBytes(s.heap);
+    E.dv.heap.textContent = fmtBytes(s.int_free ?? s.heap);   // older firmware has no int_free
     E.dv.psram.textContent = s.psram === 0 ? 'None' : fmtBytes(s.psram);
     E.dv.reset.textContent = s.reset_reason ?? 'Unknown';
     const hasTemp = Number.isFinite(s.temp);

@@ -64,6 +64,6 @@ idf_component_register(
          "${C_FILE}" "${ASM_FILE}"
     INCLUDE_DIRS "." "fido"
     REQUIRES nvs_flash esp_netif esp_wifi bt esp_http_server esp_timer esp_driver_gpio
-             led_strip esp_tinyusb cjson lwip cbor mbedtls efuse esp_security esp_driver_tsens)
+             led_strip esp_tinyusb cjson lwip cbor mbedtls efuse esp_security esp_driver_tsens esp_mm)
 
 set_source_files_properties("${ASM_FILE}" PROPERTIES OBJECT_DEPENDS "${GZ_FILES}")

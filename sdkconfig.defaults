@@ -12,6 +12,14 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
+# Internal RAM is reserved for what must be there (Wi-Fi/lwIP RX/TX, NimBLE controller, crypto drivers,
+# FIDO keys and stacks that touch flash): large tables and buffers in main/ are EXT_RAM_BSS_ATTR, and
+# NimBLE host pools come from PSRAM. With internal RAM near zero, malloc fell back to PSRAM for Wi-Fi
+# RX buffers and the wifi task crashed (CacheError in wDev_IndicateFrame); see docs/ARCHITECTURE.md.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# main/logbuf.c keeps the log ring in PSRAM no-init memory so it survives a panic or watchdog reset
+CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
 # Console: USB-Serial/JTAG is taken over by TinyUSB, so logs go to UART0
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y

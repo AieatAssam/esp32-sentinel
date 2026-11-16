@@ -4,7 +4,7 @@
 
 /* 4 KB was too small: the esp_tinyusb descriptor banner plus routine boot lines
  * could push early lines (net, usb) out before anyone read the ring. */
-#define LOGBUF_SIZE 16384
+#define LOGBUF_SIZE 65536    /* PSRAM; large enough to keep the lines before a reset */
 
 /* Hooks esp_log so the last LOGBUF_SIZE bytes of log output are kept in RAM. Call first in app_main. */
 void logbuf_init(void);

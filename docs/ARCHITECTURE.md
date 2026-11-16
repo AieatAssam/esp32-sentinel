@@ -69,6 +69,41 @@ the boot.
 The stack sizes and priorities come from the `xTaskCreate` and `httpd_config_t` calls.
 The TinyUSB task is created by the `esp_tinyusb` component and is not listed.
 
+## Memory
+
+The board has about 340 KB of internal RAM and 8 MB of PSRAM. Internal RAM is kept for what
+needs it: Wi-Fi and lwIP buffers (the RX path writes them from the wifi task and must not
+land in PSRAM), the NimBLE controller, the SHA/AES driver contexts (DMA-capable), the TinyUSB
+NCM buffers (DMA), task stacks that can run with the flash cache disabled (anything writing
+NVS: `sensing`, `fido`, httpd), and FIDO secrets (the master key in `store.c`, PIN and
+key-agreement state, mbedTLS allocations, which stay internal with
+`CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC`).
+
+Everything else large lives in PSRAM:
+
+- Static tables and buffers marked `EXT_RAM_BSS_ATTR` (`CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`):
+  the sensing AP/BLE/threat/baseline tables, PDP twiddles, breathing buffers, and the CTAPHID request/response/reassembly buffers (wire data only). With the option
+  on, IDF also places its own Wi-Fi, WPA and lwIP static tables there.
+- The 64 KB log ring, in no-init PSRAM (`EXT_RAM_NOINIT_ATTR`,
+  `CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY`). A magic word lets it survive a panic or
+  watchdog reset, and each line is written back from the data cache (`esp_cache_msync`) so an
+  unclean reset does not drop the last lines; after one, `/api/log` shows the earlier lines, then a "--- reset" marker.
+- NimBLE host pools (`CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`), the WebSocket and status
+  snapshot buffers, the dev raw-CSI ring.
+
+`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` stays off: Wi-Fi and lwIP buffers belong in internal
+RAM. Before this split, internal free RAM at steady state (joined, BLE scanning, four
+WebSocket clients) was about 7 KB, with a minimum of 23 bytes since boot. `malloc` then fell
+back to PSRAM for Wi-Fi RX buffers, and the wifi task crashed copying a frame into one
+(CacheError in `wDev_IndicateFrame`). WebSocket handshakes also failed ("Failed to setup
+SHA-1"). After the split, steady-state internal free RAM was about 135 KB (see the
+CHANGELOG for the measured figures).
+
+`GET /api/status` reports `int_free`, `int_min` (lowest since boot), `int_largest` and
+`dma_free`. The dashboard shows `int_free` as "Free internal RAM". `heap` and `heap_free`
+include PSRAM. Dev builds also report unused stack per task (`dev_stack_free`) and log the
+internal RAM left after each boot step ("mem after ...").
+
 ## Build-time embedding
 
 `main/CMakeLists.txt` runs `gzip -9 -n` on every file under `web/` at configure time.

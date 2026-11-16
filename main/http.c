@@ -369,6 +369,21 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "heap_min", (double)esp_get_minimum_free_heap_size());
     cJSON_AddNumberToObject(root, "psram", (double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "heap_free", (double)esp_get_free_heap_size());
+    /* "heap" is mostly PSRAM; Wi-Fi, lwIP, NimBLE and the SHA/AES drivers live on internal RAM. */
+    cJSON_AddNumberToObject(root, "int_free", (double)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_min", (double)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_largest", (double)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "dma_free", (double)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+#if CONFIG_DEV_BACKDOOR
+    /* Dev only: unused stack bytes per task (high-water mark), for sizing stacks. */
+    static const char *const k_tasks[] = {"main", "sensing", "ping", "led", "fido", "httpd", "TinyUSB",
+                                          "nimble_host", "wifi", "tiT", "sys_evt", "esp_timer", "ipc0", "ipc1"};
+    cJSON *st = cJSON_AddObjectToObject(root, "dev_stack_free");
+    for (size_t i = 0; i < sizeof(k_tasks) / sizeof(k_tasks[0]); i++) {
+        TaskHandle_t th = xTaskGetHandle(k_tasks[i]);
+        if (th) cJSON_AddNumberToObject(st, k_tasks[i], (double)uxTaskGetStackHighWaterMark(th));
+    }
+#endif
     cJSON_AddStringToObject(root, "reset_reason", recovery_reset_reason_str());
     cJSON_AddStringToObject(root, "fido", fido_state_str());
     sensing_link_t lk;

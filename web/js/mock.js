@@ -198,7 +198,7 @@ export async function mockApi(method, path, body) {
   }
 
   if (p === '/api/status') {
-    const s = { fw: 'mock-0.0.0', uptime: Math.floor(performance.now() / 1000), heap: 183000, psram: 7800000, reset_reason: 'power-on' };
+    const s = { fw: 'mock-0.0.0', uptime: Math.floor(performance.now() / 1000), heap: 8100000, int_free: 135000, psram: 7800000, reset_reason: 'power-on' };
     if (!OLD) s.temp = Math.round(41 + 2 * Math.sin(performance.now() / 9000));
     s.download = dlUntil === 0 ? null : performance.now() < dlUntil ? 'waiting_touch' : 'ok';
     return s;

@@ -1,6 +1,7 @@
 /* Radio sensing: Wi-Fi CSI (ambient OFDM frames, and the joined AP when opted in), beacon RSSI,
  * breathing, optional empty-room baseline, presence/away with optional autolock, a passive BLE
  * observer table, and the joined-mode Wi-Fi link. Published as the 10 Hz WebSocket frame. */
+#include "esp_attr.h"
 #include "sensing.h"
 
 #include <errno.h>
@@ -150,9 +151,11 @@ typedef enum { LINK_OFF, LINK_CONNECTING, LINK_CONNECTED, LINK_FAILED } link_sta
 static const char *const s_link_names[] = {"off", "connecting", "connected", "failed"};
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-static ap_t s_ap[AP_TABLE];
-static ble_t s_ble[BLE_TABLE];
-static base_entry_t s_store[AP_TABLE];    /* persisted baseline, keyed by BSSID */
+/* Tables and work buffers live in PSRAM (EXT_RAM_BSS_ATTR): internal RAM is kept for Wi-Fi, lwIP,
+ * NimBLE and the crypto drivers. None of these is touched from an ISR or with the cache disabled. */
+static EXT_RAM_BSS_ATTR ap_t s_ap[AP_TABLE];
+static EXT_RAM_BSS_ATTR ble_t s_ble[BLE_TABLE];
+static EXT_RAM_BSS_ATTR base_entry_t s_store[AP_TABLE];    /* persisted baseline, keyed by BSSID */
 static uint32_t s_csi_total, s_csi_unattr, s_csi_ul_total, s_beacon_total;
 static uint32_t s_hist_sig[4], s_hist_rate[32];
 static float s_beacon_rate;                /* guarded by s_mux; set by the tick */
@@ -171,7 +174,7 @@ static bool s_br_visible;
 static float s_br_bpm, s_br_conf;
 static const char *s_br_state = "off";     /* off | listening | motion | found, sent in the frame */
 static uint32_t s_ping_tx, s_ping_rx;      /* ICMP echo requests sent / echo replies seen, 5 s log */
-static float s_cos[64][16], s_sin[64][16];  /* IDFT twiddles for the PDP, filled at start */
+static EXT_RAM_BSS_ATTR float s_cos[64][16], s_sin[64][16];  /* IDFT twiddles for the PDP, filled at start */
 
 /* Joined mode (guarded by s_mux). */
 static link_state_t s_link = LINK_OFF;
@@ -184,8 +187,8 @@ static uint32_t s_gw;                      /* gateway for the ICMP keepalive, ne
 static bool s_wifi_ready;                  /* set by the sensing task once Wi-Fi is running */
 
 /* Threat alerts (guarded by s_mux) and chip temperature (guarded by s_mux). */
-static thr_slot_t s_thr[THR_SLOTS];
-static thr_trk_t s_trk[THR_TRK_SLOTS];     /* tracker first-seen, kept apart from the BLE table */
+static EXT_RAM_BSS_ATTR thr_slot_t s_thr[THR_SLOTS];
+static EXT_RAM_BSS_ATTR thr_trk_t s_trk[THR_TRK_SLOTS];     /* tracker first-seen, kept apart from the BLE table */
 static thr_ap_ev_t s_apev[AP_TABLE];       /* scratch for ap_choose, under s_mux */
 static float s_temp = NAN;
 static temperature_sensor_handle_t s_tsens;
@@ -936,13 +939,13 @@ static float shape_dev(const ap_t *a)
 }
 
 /* Breathing from the last 30 s of 100 ms bins, resampled to 10 Hz (sample and hold). Runs every 5 s. */
-static float s_brv[BR_N];
-static int64_t s_brt[BR_N];
-static uint16_t s_brc[BR_N];
+static EXT_RAM_BSS_ATTR float s_brv[BR_N];
+static EXT_RAM_BSS_ATTR int64_t s_brt[BR_N];
+static EXT_RAM_BSS_ATTR uint16_t s_brc[BR_N];
 
 static void breath_pass(void)
 {
-    static float x[BR_N];
+    static EXT_RAM_BSS_ATTR float x[BR_N];
     for (int i = 0; i < AP_TABLE; i++) {
         portENTER_CRITICAL(&s_mux);
         ap_t *a = &s_ap[i];
@@ -1485,9 +1488,9 @@ typedef struct {
 } alert_t;
 #define ALERT_CAP (THR_SLOTS + THR_TRK_SLOTS)
 
-static apd_t s_apd[AP_TABLE];
-static bled_t s_bled[BLE_TABLE];
-static alert_t s_alerts[ALERT_CAP];
+static EXT_RAM_BSS_ATTR apd_t s_apd[AP_TABLE];
+static EXT_RAM_BSS_ATTR bled_t s_bled[BLE_TABLE];
+static EXT_RAM_BSS_ATTR alert_t s_alerts[ALERT_CAP];
 static thr_ap_t s_tap[AP_TABLE];
 static bool s_tflag[AP_TABLE];
 

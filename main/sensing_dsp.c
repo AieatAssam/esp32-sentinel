@@ -2,6 +2,12 @@
 
 #include <math.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#else
+#define EXT_RAM_BSS_ATTR          /* host test build */
+#endif
+
 /* Tunables: peak/background power ratio mapped linearly to conf in [0, 1]. */
 #define BR_MIN_BPM     6.0f
 #define BR_STEP_BPM    0.5f
@@ -35,7 +41,7 @@ bool dsp_breath_estimate(const float *x, int n, float fs, float *bpm_out, float 
     for (int i = 0; i < n; i++) mean += x[i];
     mean /= n;
 
-    static float y[SENSING_DSP_MAX_N];
+    static EXT_RAM_BSS_ATTR float y[SENSING_DSP_MAX_N];   /* PSRAM on the device */
     double energy = 0.0;
     for (int i = 0; i < n; i++) {
         double w = 0.5 * (1.0 - cos(2.0 * M_PI * i / (n - 1)));

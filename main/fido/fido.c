@@ -1,4 +1,5 @@
 #include <string.h>
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -67,8 +68,10 @@ static const char *const k_state_names[] = {"idle", "busy", "waiting_touch"};
 /* Channel of the request in flight; used for KEEPALIVE and CANCEL. */
 static uint32_t s_req_cid;
 static bool s_drop_reply;                 /* INIT resynced the channel: the transaction is abandoned */
-static uint8_t s_req_buf[CTAPHID_MAX_MSG];
-static uint8_t s_resp[CTAPHID_MAX_MSG + 1];
+/* CTAP messages in PSRAM: they carry only wire data (PIN material arrives encrypted under the session
+ * key). Keys, PIN state and the master key stay in internal RAM. */
+static EXT_RAM_BSS_ATTR uint8_t s_req_buf[CTAPHID_MAX_MSG];
+static EXT_RAM_BSS_ATTR uint8_t s_resp[CTAPHID_MAX_MSG + 1];
 
 /* ---- BOOT button, sampled on the fido task. A press counts only after the button was seen released
  * since sampling (re)started, so a press made before a request, or a held button, never counts. ---- */
