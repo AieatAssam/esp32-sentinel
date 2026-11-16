@@ -12,6 +12,8 @@ All notable changes to this project are recorded here. The format is based on
   has moved from the empty room. With `use_baseline` on, presence holds while `near` is at least
   the new `near_threshold` setting (default 0.40, dashboard slider under Advanced, Sensing).
   Relative, not a distance; see docs/SENSING.md for what was measured.
+- Development builds only: raw BLE advertisement capture (`GET /api/ble_raw`, `tools/ble_capture.py`)
+  for offline analysis, alongside the raw CSI capture.
 
 ### Changed
 

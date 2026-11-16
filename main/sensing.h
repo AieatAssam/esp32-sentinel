@@ -50,6 +50,22 @@ typedef struct __attribute__((packed)) {
 /* Starts capture on first call and moves up to max records, oldest first, out of the ring.
  * *dropped is the number lost to a full ring since the previous call. */
 size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped);
+
+/* Development only: raw BLE advertisements for offline analysis (GET /api/ble_raw, tools/ble_capture.py).
+ * Little-endian, packed, 45 bytes (the fields below; data holds one legacy advert payload). */
+typedef struct __attribute__((packed)) {
+    uint32_t t_ms;          /* milliseconds since boot */
+    uint8_t addr[6];        /* advertiser address */
+    uint8_t addr_type;
+    int8_t rssi;            /* raw RSSI of this advert */
+    uint8_t evt_type;       /* advertising PDU type as NimBLE reports it */
+    uint8_t len;            /* advert data length, at most 31 */
+    uint8_t data[31];       /* advert payload, zero-padded */
+} sensing_ble_raw_t;
+_Static_assert(sizeof(sensing_ble_raw_t) == 45, "sensing_ble_raw_t layout changed");
+/* Starts capture on first call and moves up to max records, oldest first, out of the ring.
+ * *dropped is the number lost to a full ring since the previous call. */
+size_t sensing_ble_raw_read(sensing_ble_raw_t *out, size_t max, uint32_t *dropped);
 #endif
 
 /* Joined mode. The password is stored in NVS namespace "wifi" and never returned. */

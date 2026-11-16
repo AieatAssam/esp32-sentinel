@@ -113,7 +113,7 @@ counts as presence unless switched on.
 So the gates and thresholds are left as they are: they correctly kept the estimate hidden. A
 reading needs a geometry where the chest moves a path that dominates the channel (closer to the
 device or between it and the AP) and a still person; that has not been tested. Raw captures for
-this kind of analysis come from `tools/csi_capture.py` on a development build.
+this kind of analysis come from `tools/csi_capture.py` on a development build. Raw BLE adverts for offline analysis come from `tools/ble_capture.py` (`GET /api/ble_raw`, development build only).
 
 ## Trust: which access points count for presence
 

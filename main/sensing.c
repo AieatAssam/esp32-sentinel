@@ -352,6 +352,46 @@ size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped)
     portEXIT_CRITICAL(&s_raw_mux);
     return n;
 }
+
+/* BLE advert ring (development only), allocated in PSRAM by the first sensing_ble_raw_read. */
+#define BLE_RAW_RING 2048                   /* ~1 min of passive adverts in a quiet room */
+static portMUX_TYPE s_ble_raw_mux = portMUX_INITIALIZER_UNLOCKED;
+static sensing_ble_raw_t *s_ble_raw;
+static uint32_t s_ble_raw_w, s_ble_raw_r, s_ble_raw_drop; /* free-running indices, guarded by s_ble_raw_mux */
+
+static void ble_raw_push(const struct ble_gap_disc_desc *d)
+{
+    if (!s_ble_raw) return;
+    sensing_ble_raw_t r = {0};
+    r.t_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    memcpy(r.addr, d->addr.val, 6);
+    r.addr_type = d->addr.type;
+    r.rssi = d->rssi;
+    r.evt_type = d->event_type;
+    r.len = d->data ? (d->length_data < 31 ? d->length_data : 31) : 0;   /* length comes from the air */
+    if (r.len) memcpy(r.data, d->data, r.len);
+    portENTER_CRITICAL(&s_ble_raw_mux);
+    if (s_ble_raw_w - s_ble_raw_r < BLE_RAW_RING) s_ble_raw[s_ble_raw_w++ % BLE_RAW_RING] = r;
+    else s_ble_raw_drop++;
+    portEXIT_CRITICAL(&s_ble_raw_mux);
+}
+
+size_t sensing_ble_raw_read(sensing_ble_raw_t *out, size_t max, uint32_t *dropped)
+{
+    if (!s_ble_raw) {
+        sensing_ble_raw_t *p = heap_caps_calloc(BLE_RAW_RING, sizeof(sensing_ble_raw_t), MALLOC_CAP_SPIRAM);
+        portENTER_CRITICAL(&s_ble_raw_mux);
+        s_ble_raw = p;
+        portEXIT_CRITICAL(&s_ble_raw_mux);
+    }
+    size_t n = 0;
+    portENTER_CRITICAL(&s_ble_raw_mux);
+    while (n < max && s_ble_raw_r != s_ble_raw_w) out[n++] = s_ble_raw[s_ble_raw_r++ % BLE_RAW_RING];
+    *dropped = s_ble_raw_drop;
+    s_ble_raw_drop = 0;
+    portEXIT_CRITICAL(&s_ble_raw_mux);
+    return n;
+}
 #endif
 
 /* Workaround for a Wi-Fi driver (libpp, IDF v6.0.1) bug. With CSI on, wDev_IndicateFrame copies an RX
@@ -757,6 +797,9 @@ static int ble_gap_cb(struct ble_gap_event *ev, void *arg)
     (void)arg;
     if (ev->type != BLE_GAP_EVENT_DISC) return 0;
     const struct ble_gap_disc_desc *d = &ev->disc;
+#if CONFIG_DEV_BACKDOOR
+    ble_raw_push(d);
+#endif
     char name[25] = {0};
     struct ble_hs_adv_fields f;
     if (ble_hs_adv_parse_fields(&f, d->data, d->length_data) == 0 && f.name && f.name_len) {
