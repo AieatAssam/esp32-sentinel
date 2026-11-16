@@ -3,7 +3,9 @@
 All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] - unreleased
+## [0.1.1] - 2026-11-16
+
+Tag `v0.1.0` (2026-11) was cut before the entries under Fixed; use 0.1.1.
 
 ### Added
 

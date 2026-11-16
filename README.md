@@ -13,7 +13,7 @@ when nobody is.
 > heuristic, and its FIDO key has no trusted attestation. Do not use it to protect anything
 > that matters.
 
-Version 0.1.0, unreleased. Developed and tested on one board, on one host operating system
+Version 0.1.1. Developed and tested on one board, on one host operating system
 (macOS). See [Limitations](#limitations).
 
 ![Dashboard with simulated data, showing the radio scene and the presence panel](docs/img/dashboard-mock.png)

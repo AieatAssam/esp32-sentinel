@@ -69,7 +69,7 @@ static const char *TAG = "http";
  * a full session table, and an accept() failing with ENFILE first leaves the server dead for as
  * long as the clients hold their sockets. 3 = httpd internals, 1 = sensing ICMP, 2 spare. */
 _Static_assert(CONFIG_LWIP_MAX_SOCKETS >= HTTPD_SESSIONS + 3 + 1 + 2, "lwIP socket budget");
-#define FW_VERSION       "0.1.0"
+#define FW_VERSION       "0.1.1"
 #define LOCK_MIN_US      (5LL * 1000000)  /* POST /api/lock: one per 5 s */
 #define WRITE_MIN_US     (5LL * 1000000)  /* calibrate and wifi (NVS writes): one per 5 s each */
 #define DL_CONFIRM_MS    30000            /* download mode: BOOT must be held within 30 s ... */
