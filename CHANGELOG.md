@@ -30,8 +30,7 @@ All notable changes to this project are recorded here. The format is based on
   failed ("Failed to setup SHA-1"). Large static tables and buffers,
   the log ring and the NimBLE host pools moved to PSRAM: steady state is now about 135 KB
   free, at least 40 KB at its lowest over 30 to 40-minute soaks. See docs/ARCHITECTURE.md, Memory.
-- Wi-Fi task crash, seen as a CacheError panic in `wDev_IndicateFrame` or as a "wdt" reset
-  with no core dump, about once an hour. With CSI on, the Wi-Fi driver (IDF v6.0.1 libpp)
+- Wi-Fi task crash: a CacheError panic in `wDev_IndicateFrame`. With CSI on, the Wi-Fi driver (IDF v6.0.1 libpp)
   copies a received frame as `len - 44 - csi_len` bytes without a check; a buffer no longer
   than its own CSI makes that wrap to about 4 GB. Present before the memory change too. The
   firmware now wraps `esf_buf_alloc` and refuses the buffers for such a frame, so the driver discards
@@ -45,6 +44,10 @@ All notable changes to this project are recorded here. The format is based on
 
 ### Known limitations
 
+- Rare "wdt" resets with no core dump. One happened after the `esf_buf_alloc` workaround
+  (an `InstrFetchProhibited` at address 0 whose panic handler then hung), so not all of
+  them are the CSI bug above. Dev builds write the panic reason and registers into the log
+  ring before the handler runs, so the next occurrence should name the caller.
 - Host-side behaviour (the USB NCM network, the lock shortcut, the host tools) is
   untested on platforms other than the developer's own setup. Treat other platforms as
   untested.

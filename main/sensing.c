@@ -343,6 +343,10 @@ size_t sensing_raw_read(sensing_raw_t *out, size_t max, uint32_t *dropped)
  * one takes the driver's own allocation-failure path, which discards the frame. This relies on this
  * driver build's layout: wDevCtrl's first word points at the RX descriptor, whose word 0 holds the
  * length in bits 12-23 and word 1 the buffer. Re-check (disassemble wDev_IndicateFrame) on IDF updates. */
+#include "esp_idf_version.h"
+#if ESP_IDF_VERSION != ESP_IDF_VERSION_VAL(6, 0, 1)
+#error "Re-check the esf_buf_alloc workaround against this IDF's libpp, then update this version check"
+#endif
 extern void wDev_IndicateFrame(void);
 extern uint32_t *wDevCtrl; /* first word of the driver's struct: the current RX descriptor */
 uint32_t wdev_csi_len_align(void *buf);
