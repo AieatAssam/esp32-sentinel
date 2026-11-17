@@ -107,7 +107,20 @@ and no core dump. Dev builds copy panic output into the log ring (`main/logbuf.c
 `GET /api/status` reports `int_free`, `int_min` (lowest since boot), `int_largest` and
 `dma_free`. The dashboard shows `int_free` as "Free internal RAM". `heap` and `heap_free`
 include PSRAM. Dev builds also report unused stack per task (`dev_stack_free`) and log the
-internal RAM left after each boot step ("mem after ...").
+internal RAM left after each boot step ("mem after ..."), including before and after Bluetooth
+starts. Dev builds also keep the last panic (core, PC, A0, SP, cause, uptime) in no-init PSRAM
+with a magic word and checksum, and report it as `last_panic` in `/api/status` (`null` when
+there is none).
+
+Bluetooth costs internal RAM for the controller and host. `sdkconfig.defaults` trims features
+the observer does not use: NimBLE security and BLE 5.0 features, the controller test mode,
+one controller activity, one ACL buffer from the controller, and an advert-report flow control
+budget of 50. Measured on a dev build: Bluetooth start took 37,760 bytes before the trims and
+31,440 after; internal free after scanning started went from 142,163 to 152,227 bytes, and at
+about 3 minutes uptime from 139,831 to 149,787. The minimum since boot depends on load: about
+109,000 with no WebSocket client in the first minutes, and 60,000 to 67,000 with a WebSocket
+client connected from boot (59,935 before the trims, 67,003 after). Advert reception was
+unchanged (about 8 per second).
 
 ## Build-time embedding
 
@@ -162,7 +175,8 @@ a panic but are not kept across a power loss.
 | `near` | nearness, number 0 to 1, or `null` when no calibrated baseline has a noise floor |
 | `presence` | `present` or `away` |
 | `away_in` | seconds until away, or `null` |
-| `why` | `motion`, `breathing`, `baseline`, or `null` |
+| `why` | `motion`, `breathing`, `baseline`, `ble`, or `null` |
+| `ble_cue` | `null` when `use_ble` is off, else `{active, rssi, heard}`; see SENSING.md |
 | `breath` | `{bpm, conf}`, or `null` |
 | `baseline` | `{set, dev}`, or `{set: false, capturing: true, left}` while capturing |
 | `aps` | access points (at most 12, strongest first); see below |

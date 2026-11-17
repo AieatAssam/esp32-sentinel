@@ -1,7 +1,6 @@
 #include "config.h"
 #include "esp_err.h"
 #include "esp_event.h"
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "fido/fido.h"
@@ -15,16 +14,6 @@
 #include "usb.h"
 
 static const char *TAG = "main";
-
-#if CONFIG_DEV_BACKDOOR
-/* Dev only: internal RAM left after each init step, read back with GET /api/log. */
-#define MEM(what) ESP_LOGI(TAG, "mem after %s: internal %u, largest %u, dma %u", what,                     \
-                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),                          \
-                           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),                 \
-                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL))
-#else
-#define MEM(what) ((void)0)
-#endif
 
 /* After recovery_check_on_boot() nothing may abort the boot: log the error and go on,
  * so the device stays reachable over HTTP and the crash-loop guard sees a healthy path. */

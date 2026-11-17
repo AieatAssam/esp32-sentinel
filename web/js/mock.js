@@ -20,7 +20,7 @@ const NOBREATH = Q.get('nobreath') === '1';
 
 const cfg = {
   autolock: true, away_secs: 30, motion_threshold: 0.2, near_threshold: 0.4, lock_os: 'mac',
-  channel: 0, led_gpio: 48, led_brightness: 40, use_breathing: false, use_baseline: false,
+  channel: 0, led_gpio: 48, led_brightness: 40, use_breathing: false, use_baseline: false, use_ble: false, ble_near_dbm: -55,
 };
 
 const fido = { count: 3, hardened: false, state: 'idle', op_state: null, pin_set: false, pin_retries: 8 };
@@ -130,11 +130,16 @@ function makeFrame(t, now) {
     ? +clamp((presence === 'away' ? 0.1 : 0.5) + 0.12 * Math.sin(t * 0.13) + 0.03 * Math.sin(t * 1.7), 0, 1).toFixed(2)
     : null;
 
+  // Bluetooth cue: null when switched off; active early in the present stretch.
+  const bleCue = !cfg.use_ble ? null : cyc < 12
+    ? { active: true, rssi: -50 + Math.round(3 * Math.sin(t)), heard: Math.round(cyc % 4) }
+    : { active: false, rssi: null, heard: null };
   let why = null;
   if (presence === 'present') {
     if (motion > cfg.motion_threshold) why = 'motion';
     else if (breath) why = 'breathing';
     else if (cfg.use_baseline && near != null && near >= cfg.near_threshold) why = 'baseline';
+    else if (bleCue && bleCue.active) why = 'ble';
   }
 
   const fc = t % 45;
@@ -142,7 +147,7 @@ function makeFrame(t, now) {
 
   const frame = {
     t: Math.round(t * 1000), ch: cfg.channel || 6, motion: +motion.toFixed(3), ...(OLD ? {} : { near }),
-    presence, away_in, aps, ble, fido: { state: fidoState }, breath, baseline, why, stub: false,
+    presence, away_in, aps, ble, fido: { state: fidoState }, breath, baseline, why, ble_cue: bleCue, stub: false,
   };
   if (!OLD) {
     frame.link = { mode: joined ? 'joined' : 'passive', state: wifi.state, ssid: wifi.ssid };
@@ -173,8 +178,8 @@ export function startMock(onFrame, onStatus) {
   setInterval(tick, 100);
 }
 
-const RULES = { away_secs: [5, 600], motion_threshold: [0, 1], near_threshold: [0, 1], channel: [0, 13], led_gpio: [0, 48], led_brightness: [0, 255] };
-const BOOLS = ['autolock', 'use_breathing', 'use_baseline'];
+const RULES = { away_secs: [5, 600], motion_threshold: [0, 1], near_threshold: [0, 1], channel: [0, 13], led_gpio: [0, 48], led_brightness: [0, 255], ble_near_dbm: [-80, -30] };
+const BOOLS = ['autolock', 'use_breathing', 'use_baseline', 'use_ble'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let dlUntil = 0;   // mock BOOT confirmation for download mode
 

@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "sensing_dsp.h"
 
@@ -121,6 +122,98 @@ static void test_nearness(void)
     assert(isnan(dsp_nearness(0.05f, 0.02f, 0.0f)));
 }
 
+/* A frame of 64 subcarriers: amplitude a[k] (imag 0, real a[k]). */
+static void frame(int8_t *iq, const float *a)
+{
+    for (int k = 0; k < 64; k++) { iq[2 * k] = 0; iq[2 * k + 1] = (int8_t)lrintf(a[k]); }
+}
+
+/* Feeds 60 s at 30 frames/s; shift(sec) moves the shape from second to second. Returns the ratio
+ * of the last full bin. Per-frame noise is about 3 counts on 40, the level of the recording. */
+static float motion_run(float step)
+{
+    static dsp_motion_t m;
+    memset(&m, 0, sizeof(m));
+    const uint8_t me[6] = {1, 2, 3, 4, 5, 6}, other[6] = {9, 9, 9, 9, 9, 9};
+    int8_t iq[128];
+    float a[64];
+    for (int i = 0; i < 60 * 30; i++) {
+        int64_t t = 1000000000LL + (int64_t)i * 1000000 / 30;
+        int sec = i / 30;
+        for (int k = 0; k < 64; k++) a[k] = 40.0f + 5.0f * noise() + step * ((sec * 7 + k) % 5 - 2);
+        frame(iq, a);
+        dsp_motion_frame(&m, iq, me, 1, t);
+        dsp_motion_frame(&m, iq, me, 0, t);          /* legacy frames are ignored */
+        if (i % 3 == 0) dsp_motion_frame(&m, iq, other, 1, t);   /* minority destination: ignored */
+    }
+    int64_t end = 1000000000LL + 60LL * 1000000;
+    dsp_motion_advance(&m, end + 1);
+    return dsp_motion_ratio(&m, (int32_t)(end / DSP_MOT_BIN_US) - 1);
+}
+
+static void test_motion(void)
+{
+    float still = motion_run(0.0f), moving = motion_run(3.0f);
+    printf("motion: still ratio %.2f (score %.3f), moving ratio %.1f (score %.3f)\n", still,
+           dsp_motion_score(still), moving, dsp_motion_score(moving));
+    assert(still > 0.3f && still < 3.0f);     /* about 1 when nothing moves */
+    assert(moving > 20.0f);
+    /* Mapping: monotone, the default threshold 0.15 is ratio 6, no data is 0. */
+    assert(fabsf(dsp_motion_score(6.0f) - 0.15f) < 1e-6f);
+    assert(dsp_motion_score(NAN) == 0.0f && dsp_motion_score(1e6f) < 1.0f);
+    for (float r = 0.0f; r < 100.0f; r += 0.5f) assert(dsp_motion_score(r + 0.5f) > dsp_motion_score(r));
+    /* Too few frames: no ratio. */
+    static dsp_motion_t m;
+    int8_t iq[128];
+    float a[64];
+    for (int k = 0; k < 64; k++) a[k] = 40.0f;
+    frame(iq, a);
+    const uint8_t me[6] = {1};
+    for (int i = 0; i < 40; i++) dsp_motion_frame(&m, iq, me, 1, 2000000000LL + i * 250000LL);   /* 4/s */
+    dsp_motion_advance(&m, 2000000000LL + 20000000LL);
+    assert(isnan(dsp_motion_ratio(&m, 200)));
+}
+
+static void test_sustain(void)
+{
+    dsp_sustain_t s = {0};
+    assert(!dsp_sustain_push(&s, false));
+    assert(!dsp_sustain_push(&s, true) && !dsp_sustain_push(&s, false));   /* 1 of 6: not yet */
+    assert(!dsp_sustain_push(&s, true));                                    /* 2 of 6 */
+    assert(dsp_sustain_push(&s, true));                                     /* 3 of 6: present */
+    int held = 0;
+    while (dsp_sustain_push(&s, false)) held++;
+    printf("sustain: held %d bins after the first sustained bin\n", held);
+    assert(held == 12);   /* 2 more bins still have 3 of 6, then 10: 12 bins from the start of the last one */
+}
+
+static void test_ble(void)
+{
+    static dsp_ble_t tab[DSP_BLE_N];
+    const uint8_t dev[6] = {0xc0, 1, 2, 3, 4, 5}, mac[6] = {0xc0, 9, 9, 9, 9, 9};
+    int h;
+    /* A device near from the start (the computer itself) never counts. */
+    for (uint32_t t = 100; t < 1000; t += 60) assert(dsp_ble_seen(tab, mac, -45, t, -55) == 0);
+    /* Far for 10 min, then close: counts on the first strong advert. */
+    for (uint32_t t = 100; t < 700; t += 120) assert(dsp_ble_seen(tab, dev, -80, t, -55) == 0);
+    assert(dsp_ble_seen(tab, dev, -50, 760, -55) == 2);
+    assert(dsp_ble_tick(tab, 800, &h) && h == 40);
+    assert(dsp_ble_seen(tab, dev, -52, 880, -55) == 1);
+    assert(dsp_ble_tick(tab, 880 + DSP_BLE_HOLD_S, &h) && h == DSP_BLE_HOLD_S);
+    assert(!dsp_ble_tick(tab, 881 + DSP_BLE_HOLD_S, &h));    /* hold over */
+    /* A passing crowd of new addresses does not push out a device heard for a while. */
+    uint8_t a[6] = {0x40, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 200; i++) { a[5] = (uint8_t)i; dsp_ble_seen(tab, a, -70, 1100, -55); }
+    dsp_ble_seen(tab, dev, -60, 1110, -55);
+    int found = 0;
+    for (int i = 0; i < DSP_BLE_N; i++) if (!memcmp(tab[i].addr, dev, 6) && (tab[i].flags & DSP_BLE_USED)) found = 1;
+    assert(found);
+    /* Expiry after the TTL. */
+    assert(!dsp_ble_tick(tab, 1110 + DSP_BLE_TTL_S + 1, &h));
+    for (int i = 0; i < DSP_BLE_N; i++) assert(!(tab[i].flags & DSP_BLE_USED));
+    printf("ble cue: fires after an approach, holds %d s, keeps old entries, expires\n", DSP_BLE_HOLD_S);
+}
+
 int main(void)
 {
     test_tone_found();
@@ -128,6 +221,9 @@ int main(void)
     test_recorded_levels();
     test_resample_hole();
     test_nearness();
+    test_motion();
+    test_sustain();
+    test_ble();
     printf("all sensing dsp cases pass\n");
     return 0;
 }

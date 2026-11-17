@@ -28,6 +28,7 @@
 #include "http.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -221,6 +222,8 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "use_breathing", c->use_breathing);
     cJSON_AddBoolToObject(root, "use_baseline", c->use_baseline);
     cJSON_AddNumberToObject(root, "near_threshold", c->near_threshold);
+    cJSON_AddBoolToObject(root, "use_ble", c->use_ble);
+    cJSON_AddNumberToObject(root, "ble_near_dbm", c->ble_near_dbm);
     return send_json(req, root);
 }
 
@@ -278,6 +281,14 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
     if ((j = cJSON_GetObjectItem(in, "near_threshold"))) {
         if (cJSON_IsNumber(j)) c.near_threshold = (float)j->valuedouble; else bad_type = true;
+    }
+    if ((j = cJSON_GetObjectItem(in, "use_ble"))) {
+        if (cJSON_IsBool(j)) c.use_ble = cJSON_IsTrue(j); else bad_type = true;
+    }
+    if ((j = cJSON_GetObjectItem(in, "ble_near_dbm"))) {
+        if (cJSON_IsNumber(j) && j->valuedouble >= -80 && j->valuedouble <= -30) c.ble_near_dbm = (int)j->valuedouble;
+        else if (cJSON_IsNumber(j)) c.ble_near_dbm = 0;   /* out of range: config_set rejects it */
+        else bad_type = true;
     }
     cJSON_Delete(in);
 
@@ -407,6 +418,20 @@ static esp_err_t status_handler(httpd_req_t *req)
     for (size_t i = 0; i < sizeof(k_tasks) / sizeof(k_tasks[0]); i++) {
         TaskHandle_t th = xTaskGetHandle(k_tasks[i]);
         if (th) cJSON_AddNumberToObject(st, k_tasks[i], (double)uxTaskGetStackHighWaterMark(th));
+    }
+    /* Dev only: the most recent panic (survives log rollover and resets, not a power cycle). */
+    logbuf_panic_t pr;
+    if (logbuf_last_panic(&pr)) {
+        cJSON *pj = cJSON_AddObjectToObject(root, "last_panic");
+        char hx[11];
+        cJSON_AddNumberToObject(pj, "core", (double)(int32_t)pr.core);
+        snprintf(hx, sizeof(hx), "0x%08" PRIx32, pr.pc); cJSON_AddStringToObject(pj, "pc", hx);
+        snprintf(hx, sizeof(hx), "0x%08" PRIx32, pr.a0); cJSON_AddStringToObject(pj, "a0", hx);
+        snprintf(hx, sizeof(hx), "0x%08" PRIx32, pr.sp); cJSON_AddStringToObject(pj, "sp", hx);
+        cJSON_AddNumberToObject(pj, "cause", (double)pr.cause);
+        cJSON_AddNumberToObject(pj, "uptime_s", (double)pr.uptime_s);
+    } else {
+        cJSON_AddNullToObject(root, "last_panic");
     }
 #endif
     cJSON_AddStringToObject(root, "reset_reason", recovery_reset_reason_str());

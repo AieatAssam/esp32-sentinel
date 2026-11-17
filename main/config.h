@@ -13,7 +13,9 @@ typedef struct {
     int channel;              /* 0 = auto, else 1..13 */
     bool use_breathing;       /* default false: show breathing and count it as presence */
     bool use_baseline;        /* default false: empty-room baseline (nearness) in presence */
-    float near_threshold;     /* 0..1; appended last: a blob stored without it still loads */
+    float near_threshold;     /* 0..1; appended: a blob stored without it still loads */
+    bool use_ble;             /* default false: Bluetooth presence cue; appended like near_threshold */
+    int ble_near_dbm;         /* -80..-30: a cue device must be heard at this level or stronger */
 } app_config_t;
 
 /* Loads the config from NVS (defaults when absent or invalid). Call after nvs_flash_init(). */

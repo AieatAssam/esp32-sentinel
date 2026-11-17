@@ -148,6 +148,20 @@
             <input type="checkbox" role="switch" id="c_use_baseline">
             <span class="flag" data-flag="use_baseline" role="status"></span>
           </div>
+          <div class="field">
+            <label for="c_use_ble">Use Bluetooth as a presence cue</label>
+            <input type="checkbox" role="switch" id="c_use_ble" aria-describedby="bleHelp">
+            <span class="flag" data-flag="use_ble" role="status"></span>
+          </div>
+          <div class="field">
+            <label for="c_ble_near_dbm">Bluetooth signal strength</label>
+            <span class="ctl">
+              <input type="range" id="c_ble_near_dbm" min="-80" max="-30" step="1">
+              <output id="o_ble_near_dbm" for="c_ble_near_dbm">-55 dBm</output>
+            </span>
+            <span class="flag" data-flag="ble_near_dbm" role="status"></span>
+          </div>
+          <p class="detail" id="bleHelp">It keeps you &ldquo;present&rdquo; while a personal device that arrived with you stays close, and a phone left on the desk will keep the screen unlocked.</p>
           <div class="reading">
             <p class="detail" id="baseText">Baseline not set.</p>
             <p class="detail">Motion <output class="measured" id="motionVal">0.00</output></p>

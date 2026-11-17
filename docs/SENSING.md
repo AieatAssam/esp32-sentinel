@@ -1,8 +1,8 @@
 # Sensing
 
 The device infers presence from the radio environment. It uses no camera and no
-microphone. The estimates are heuristics. They have not been measured against ground
-truth in this repository, and they are not a safety system.
+microphone. The estimates are heuristics, checked against one recorded session only, and they are not
+a safety system.
 
 ## Inputs
 
@@ -20,8 +20,25 @@ truth in this repository, and they are not a safety system.
 
 Implemented in `main/sensing.c` and `main/sensing_dsp.c`. Values are in the tables below.
 
-- **Motion.** Score from the per-subcarrier CSI variation, smoothed with an EWMA of 0.3
-  per 100 ms tick. Compared against `motion_threshold` (default 0.15).
+- **Motion.** A noise-normalised ratio per access point, per 10 s bin (`dsp_motion_*` in
+  `main/sensing_dsp.c`). Only HT downlink frames to the AP's most frequent destination are
+  used, each amplitude shape renormalised over 51 subcarriers. Each whole second with at least
+  5 frames gives a mean shape and the noise of that mean; the bin's ratio is the variance
+  between those 1 s means divided by the mean noise. It is about 1 when nothing moves,
+  whatever the frame rate. The score is `r / (r + 34)`, so noise reads about 0.03 to 0.07 and
+  the default `motion_threshold` 0.15 is a ratio of 6. The feed `motion` is the highest score
+  over the access points that count, updated every 10 s. Beacon RSSI spread is still shown per
+  access point when it has no CSI, but it no longer sets presence.
+- **Sustained movement.** A bin is moving when its score is above `motion_threshold`. Motion
+  presence starts once at least 3 of the last 6 bins moved and holds for 12 bins (2 min) from
+  the start of the last such bin; the away timer then runs.
+
+  The earlier score (mean per-subcarrier spread of every frame, EWMA) saturated: on the same
+  device with the room still it read min 0.24, median 0.63, max 0.93, so it was always above
+  0.15 and always "present". The ratio reads median 0.03 to 0.06 when still. Replayed over a
+  recorded 6 hour session at one desk (`tools/csi_capture.py` data, run through the C code), it was present
+  36% of the time, picked up an arrival about 5 minutes before the first keyboard input, cleared
+  about 3 minutes after the last, and showed no false presence in the first 45 empty minutes.
 - **Breathing.** Experimental. A band-limited estimate from the CSI series. Shown and counted
   as presence only when its gates pass (below). Off by default (`use_breathing`); when off it
   neither sets nor holds presence. It has not been seen to read in testing; see
@@ -31,9 +48,11 @@ Implemented in `main/sensing.c` and `main/sensing_dsp.c`. Values are in the tabl
   (`use_baseline`).
 - **Nearness.** How far the CSI subcarrier shape has moved from the empty-room baseline, 0 to
   1 (`near` in the feed). See [Nearness](#nearness).
-- **Presence.** Motion, breathing (when `use_breathing` is on), and nearness (when
-  `use_baseline` is on and `near` is at least `near_threshold`) are evaluated in that order in
-  `tick_locked()`. The first one that holds sets `why` in the feed (`baseline` for nearness).
+- **Presence.** Sustained motion, breathing (when `use_breathing` is on), nearness (when
+  `use_baseline` is on and `near` is at least `near_threshold`), and the Bluetooth cue (when
+  `use_ble` is on) are evaluated in that order in `tick_locked()`. The first one that holds
+  sets `why` in the feed (`baseline` for nearness, `ble` for the Bluetooth cue).
+- **Bluetooth cue.** Optional, off by default (`use_ble`). See [Bluetooth cue](#bluetooth-cue).
 - **Away.** Presence absent for `away_secs` (default 30 s, range 5 to 600). When
   auto-lock is on, the lock is sent once per away period. It is retried every 2 s while
   still away, if the send failed.
@@ -82,7 +101,7 @@ A breathing estimate is produced only when the window passes these checks, in
   the window may be longer than 2 s.
 - The mean CSI sample rate over the window must be at least 1.5 per second
   (`BR_MIN_FPS`).
-- Breathing is withheld while motion is above 0.5 (`BR_MOTION_MAX`).
+- Breathing is withheld while motion is above `motion_threshold`.
 - The estimate is shown in the feed only above confidence 0.2 (`BR_CONF_SHOW`), and
   counts as presence only above confidence 0.5 (`BR_CONF_PRESENT`).
 
@@ -146,9 +165,33 @@ the count reaches 3 (`THR_BCN_ANOMALIES`), the BSSID is flagged for 60 s
 (`THR_BCN_HOLD_S`). Each further anomaly while the count is at or above 3 extends the
 flag by another 60 s. The flag appears as `flag: "spoof"` on the AP in the feed.
 
+## Bluetooth cue
+
+With `use_ble` on, the BLE observer keeps a table of up to 32 advertisers (16 bytes each, in
+PSRAM) by address and RSSI only; no payload is parsed. With it off the table is not updated.
+A device counts once it has been heard for 5 minutes, its slow RSSI average (time constant
+10 min) is at or below -72 dBm, and it is then heard at `ble_near_dbm` (default -55) or
+stronger: something that was far away came close. It keeps counting while a strong advert
+came within the last 150 s, and an entry expires 15 minutes after it was last heard. When the
+table is full the entry with the fewest adverts is replaced (then the least recently heard),
+so a steady personal device is not pushed out by passing randomised addresses; a pure
+least-recently-heard rule lost the owner's phone in the recorded session.
+
+Replayed over the recorded session it fired five times: twice for the owner's device (after
+arrival and again later), and three times for other devices with nobody at the desk (twice
+before arrival, once 14 minutes after leaving), each holding presence for 2 to 12 minutes.
+It is a cue, not proof. Limits:
+
+- A phone left on the desk keeps the cue active, and with it the screen unlocked.
+- Devices with rotating addresses restart as new entries, so they count only after 5 minutes.
+- Someone else's device that comes close counts too.
+
+The feed and `/api/status` carry `ble_cue`: `null` when off, otherwise `{active, rssi, heard}`
+(strongest qualifying RSSI and seconds since it was heard, both `null` while inactive).
+
 ## Tunables
 
-Values are from `main/sensing.c` (lines 42 to 83) and `main/threats.h`. The config
+Values are from the defines at the top of `main/sensing.c`, `main/sensing_dsp.h`, and `main/threats.h`. The config
 values are from `main/config.c`.
 
 ### Access points and BLE
@@ -165,7 +208,13 @@ values are from `main/config.c`.
 | `RSSI_RING` | 64 | Beacon RSSI samples kept per AP |
 | `RSSI_WIN_US` | 3 s | Window for the RSSI spread |
 | `RSSI_SD_FLOOR` | 0.7 dB | Spread below this is treated as quantisation (RSSI is whole dBm) |
-| `RSSI_SD_FULL` | 3.0 dB | Spread that maps to motion 1.0 |
+| `RSSI_SD_FULL` | 3.0 dB | Spread that maps to motion 1.0 (display only, without CSI) |
+| `DSP_BLE_N` | 32 | Bluetooth cue table entries (`main/sensing_dsp.h`) |
+| `DSP_BLE_FAR_DBM` | -72 dBm | Slow average at or below this before a device can count |
+| `DSP_BLE_HOLD_S` | 150 s | A counting device keeps counting this long after a strong advert |
+| `DSP_BLE_TTL_S` | 900 s | Entry expires this long after it was last heard |
+| `DSP_BLE_MATURE_S` | 300 s | Time in the table before a device can count |
+| `DSP_BLE_TAU_S` | 600 s | Time constant of the slow RSSI average |
 
 ### Motion, CSI, and baseline
 
@@ -174,8 +223,10 @@ values are from `main/config.c`.
 | `CSI_TAU_S` | 3.0 s | EWMA time constant of per-subcarrier mean and variance |
 | `CSI_WARM` | 20 samples | Samples needed before an AP's CSI statistics are used |
 | `CSI_MIN_FPS` | 2.0 /s | Below this, an AP's CSI is not used for motion or baseline |
-| `CSI_MOTION_FULL` | 0.08 | Mean per-subcarrier standard deviation of normalised amplitude that maps to motion 1.0 |
-| `MOTION_EWMA` | 0.3 | Motion smoothing per 100 ms tick |
+| `DSP_MOT_SEC_MIN` | 5 frames | Frames needed for a second to count (`main/sensing_dsp.h`) |
+| `DSP_MOT_BIN_MIN` | 3 seconds | Valid seconds needed for a 10 s bin to have a ratio |
+| `DSP_MOT_K` | 34 | Score is `r / (r + K)`; ratio 6 is 0.15 |
+| `DSP_SUS_HOLD_BINS` | 12 bins | Motion presence holds this long from the last sustained bin |
 | `BASE_SHAPE_FULL` | 0.10 | Mean absolute shape difference that maps to baseline deviation 1.0 |
 | `BASE_DB_FULL` | 4.0 dB | RSSI shift from the baseline that maps to deviation 1.0, used when there is no CSI |
 | `BASE_CAPTURE_S` | 30 s | Length of a baseline capture |
@@ -194,7 +245,6 @@ values are from `main/config.c`.
 | `BR_WIN_US` | 30 s | Window length |
 | `BR_GAP_US` | 1 s | Longest gap allowed in the window (also the start tolerance) |
 | `BR_MIN_FPS` | 1.5 /s | Minimum mean CSI rate to attempt breathing |
-| `BR_MOTION_MAX` | 0.5 | Breathing withheld above this motion |
 | `BR_CONF_SHOW` | 0.2 | Confidence needed to show the breath value |
 | `BR_CONF_PRESENT` | 0.5 | Confidence needed for breathing to count as presence |
 
@@ -251,6 +301,8 @@ measured with one antenna.
 | `near_threshold` | 0.40 | 0 to 1 |
 | `use_breathing` | off | |
 | `use_baseline` | off | |
+| `use_ble` | off | |
+| `ble_near_dbm` | -55 dBm | -80 to -30 |
 
 ## Feed fields
 
@@ -266,8 +318,11 @@ access points), so the dashboard can show the fault rather than a stale estimate
 
 ## Limitations
 
-- Accuracy has not been measured in this repository. No test data, no ground truth, and
-  no error figures are published with 0.1.0.
+- Accuracy has been checked only against one recorded session at one desk (keyboard and
+  mouse activity as ground truth). No test data is published.
+- A person sitting perfectly still is not detected by Wi-Fi. Motion presence needs movement;
+  the 2 minute hold and the away timer bridge short still spells only. Breathing has not been
+  seen to read, and nearness needs a calibrated baseline.
 - Pets, fans, and other people in the room change the estimates.
 - Walls, furniture, and the device's position change the baseline. Recalibrate after
   moving the device.

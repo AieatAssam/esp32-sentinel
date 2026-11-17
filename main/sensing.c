@@ -27,6 +27,7 @@
 #include "host/ble_hs_id.h"
 #include "led.h"
 #include "lock.h"
+#include "logbuf.h"
 #include "lwip/sockets.h"
 #include "net_policy.h"
 #include "nimble/nimble_port.h"
@@ -51,20 +52,17 @@ static const char *TAG = "sensing";
 #define RSSI_WIN_US       (3LL * 1000000)
 #define RSSI_SD_FLOOR     0.7f    /* dB: RSSI is whole dBm, so below this spread is quantisation */
 #define RSSI_SD_FULL      3.0f    /* dB spread that maps to motion 1.0 */
-#define CSI_TAU_S         3.0f    /* EWMA time constant of per-subcarrier mean and variance */
+#define CSI_TAU_S         3.0f    /* EWMA time constant of the per-subcarrier mean (baseline deviation) */
 #define CSI_WARM          20      /* CSI samples needed before an AP's CSI stats are used */
 #define CSI_MIN_FPS       2.0f    /* below this an AP's CSI is not used for motion or baseline */
-#define CSI_MOTION_FULL   0.08f   /* mean per-subcarrier std of normalised amplitude that maps to 1.0 */
 #define BASE_SHAPE_FULL   0.10f   /* mean abs shape difference that maps to baseline dev 1.0 */
 #define BR_N              300     /* 30 s of 10 Hz breathing series */
 #define BR_BIN_US         100000LL/* breathing bins: 100 ms of CSI averaged into one sample */
 #define BR_WIN_US         (30LL * 1000000)
 #define BR_GAP_US         (2LL * 1000000)  /* a gap longer than this in the window blocks breathing; shorter is interpolated */
 #define BR_MIN_FPS        1.5f    /* mean CSI rate over the window needed to attempt breathing */
-#define BR_MOTION_MAX     0.5f    /* breathing is withheld when motion is above this */
 #define BR_CONF_SHOW      0.2f    /* breath is shown only above this conf */
 #define BR_CONF_PRESENT   0.5f    /* breathing counts as presence above this conf */
-#define MOTION_EWMA       0.3f    /* per 100 ms tick */
 #define BASE_DB_FULL      4.0f    /* RSSI shift from baseline that maps to dev 1.0 (no CSI) */
 #define BASE_CAPTURE_S    30      /* also the window the nearness floor is measured over */
 #define NEAR_TAU_S        15.0f   /* nearness EWMA time constant (about a 30 s window) */
@@ -107,7 +105,8 @@ typedef struct {
     /* CSI, time-weighted EWMA per subcarrier (irregular frame timestamps) */
     int64_t ewma_t;
     int ewma_n;
-    float mu[64], var[64];        /* normalised amplitude mean and variance */
+    float mu[64];                 /* normalised amplitude mean */
+    dsp_motion_t mot;             /* motion: noise-normalised 1 s shape variance per 10 s bin */
     float nmu[64];                /* nearness: slower EWMA mean (NEAR_TAU_S) of the same */
     uint32_t near_n;              /* frames since the nearness average (re)started */
     int64_t near_t0;              /* when it (re)started */
@@ -178,7 +177,16 @@ static uint32_t s_hist_sig[4], s_hist_rate[32];
 static float s_beacon_rate;                /* guarded by s_mux; set by the tick */
 static volatile uint8_t s_channel;
 static uint8_t s_passive_ch;               /* guarded by s_mux */
-static float s_motion_raw, s_motion;       /* guarded by s_mux */
+static float s_motion;                     /* guarded by s_mux: largest score of the last closed bin */
+static dsp_sustain_t s_sus;                /* guarded by s_mux: sustained-movement rule */
+static bool s_mot_present;                 /* guarded by s_mux: what the rule says now */
+/* Bluetooth presence cue (use_ble): PSRAM table, guarded by s_mux, untouched while use_ble is off. */
+static EXT_RAM_BSS_ATTR dsp_ble_t s_blep[DSP_BLE_N];
+static bool s_blep_used;                   /* table not all zero */
+static bool s_cue;                         /* cue active */
+static int s_cue_heard;                    /* seconds since the last strong advert of a counting device */
+static int s_cue_rssi;                     /* strongest strong advert of a counting device within the hold */
+static uint32_t s_cue_rssi_s;
 static float s_base_dev;                   /* guarded by s_mux */
 static float s_near = NAN;                 /* guarded by s_mux; NAN = not available */
 static bool s_cal_active;                  /* guarded by s_mux */
@@ -502,15 +510,9 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
         }
         for (int k = 0; k < 64; k++) {
             if (!sc_valid(k, skip1)) continue;
-            if (a->ewma_n == 0) {
-                a->mu[k] = norm[k];
-                a->var[k] = 0.0f;
-            } else {
-                float d = norm[k] - a->mu[k];
-                a->mu[k] += alpha * d;
-                a->var[k] = (1.0f - alpha) * (a->var[k] + alpha * d * d);
-            }
+            a->mu[k] = a->ewma_n == 0 ? norm[k] : a->mu[k] + alpha * (norm[k] - a->mu[k]);
         }
+        dsp_motion_frame(&a->mot, iq, info->dmac, sig, t);
         /* Nearness average: a cumulative mean until NEAR_TAU_S takes over, restarted after a gap so
          * one stale frame never dominates it. */
         if (a->ewma_n == 0 || t - a->ewma_t > NEAR_GAP_US) {
@@ -849,6 +851,16 @@ static int ble_gap_cb(struct ble_gap_event *ev, void *arg)
     }
     uint8_t tk = kind ? kind : (e ? e->kind : 0);
     if (tk) thr_trk_seen(s_trk, d->addr.val, tk, t);   /* L4: survives BLE table churn */
+    const app_config_t *cfg = config_get();
+    if (cfg->use_ble) {                       /* presence cue: address and RSSI only */
+        uint32_t ts = (uint32_t)(t / 1000000);
+        if (dsp_ble_seen(s_blep, d->addr.val, d->rssi, ts, cfg->ble_near_dbm) &&
+            (d->rssi > s_cue_rssi || ts - s_cue_rssi_s > DSP_BLE_HOLD_S)) {
+            s_cue_rssi = d->rssi;
+            s_cue_rssi_s = ts;
+        }
+        s_blep_used = true;
+    }
     portEXIT_CRITICAL(&s_mux);
     return 0;
 }
@@ -867,6 +879,7 @@ static void ble_on_sync(void)
     p.window = BLE_SCAN_WIN;
     int rc = ble_gap_disc(own, BLE_HS_FOREVER, &p, ble_gap_cb, NULL);
     ESP_LOGI(TAG, "ble passive observer started rc=%d", rc);
+    MEM("bluetooth scanning");
 }
 
 static void ble_host_task(void *arg)
@@ -1030,19 +1043,6 @@ static float rssi_dev(const ap_t *a, int64_t now)
     return clampf(fabsf((float)(s / n) - a->base_rssi) / BASE_DB_FULL, 0.0f, 1.0f);
 }
 
-/* Motion from CSI: mean over subcarriers of the EWMA std of normalised amplitude. */
-static float csi_motion(const ap_t *a)
-{
-    float acc = 0.0f;
-    int cnt = 0;
-    for (int k = 1; k < 64; k++) {
-        if (!sc_valid(k, false)) continue;
-        acc += sqrtf(fmaxf(0.0f, a->var[k]));
-        cnt++;
-    }
-    return cnt ? clampf((acc / cnt) / CSI_MOTION_FULL, 0.0f, 1.0f) : 0.0f;
-}
-
 /* Baseline deviation from the CSI shape: mean abs difference of the mean amplitude. */
 static float shape_dev(const ap_t *a)
 {
@@ -1153,7 +1153,27 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
         if (a->trusted && !a->spoof) any_trusted = true;
     }
 
-    float motion_max = 0.0f, base_dev = 0.0f, near = NAN;
+    /* Motion, on each 10 s bin boundary: the bin moved when the largest score over the APs that count
+     * is above motion_threshold; presence follows the sustained-movement rule. */
+    static int32_t s_mbin = -1;
+    int32_t mbin = (int32_t)(now / DSP_MOT_BIN_US);
+    if (s_mbin < 0) s_mbin = mbin;
+    for (; s_mbin < mbin; s_mbin++) {
+        float best = 0.0f;
+        for (int i = 0; i < AP_TABLE; i++) {
+            ap_t *a = &s_ap[i];
+            if (!a->used) continue;
+            dsp_motion_advance(&a->mot, now);
+            a->motion_csi = dsp_motion_score(dsp_motion_ratio(&a->mot, s_mbin));
+            if (thr_ap_counts(a->trusted, a->spoof, any_trusted, now - s_trust_epoch_us) && a->motion_csi > best) {
+                best = a->motion_csi;
+            }
+        }
+        s_motion = best;
+        s_mot_present = dsp_sustain_push(&s_sus, best > cfg->motion_threshold);
+    }
+
+    float base_dev = 0.0f, near = NAN;
     for (int i = 0; i < AP_TABLE; i++) {
         ap_t *a = &s_ap[i];
         if (!a->used) continue;
@@ -1168,10 +1188,8 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
         }
         bool csi_ok = a->csi_fps >= CSI_MIN_FPS && a->ewma_n >= CSI_WARM;
         a->motion_rssi = rssi_motion(a, now);
-        a->motion_csi = csi_ok ? csi_motion(a) : 0.0f;
-        a->motion = csi_ok ? a->motion_csi : a->motion_rssi;   /* fused per AP */
+        a->motion = csi_ok ? a->motion_csi : a->motion_rssi;   /* shown per AP; RSSI never sets presence */
         if (!counts) continue;                 /* shown in the frame, never counted */
-        if (a->motion > motion_max) motion_max = a->motion;
 
         bool near_ok = csi_ok && now - a->near_t0 >= (int64_t)(NEAR_TAU_S * 1e6f);
         if (a->base_set) {
@@ -1192,8 +1210,6 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
             a->cap_tn++;
         }
     }
-    s_motion_raw = motion_max;
-    s_motion += MOTION_EWMA * (motion_max - s_motion);
     s_base_dev = base_dev;
     s_near = near;
 
@@ -1202,6 +1218,16 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
     }
     thr_trk_tick(s_trk, now);
 
+    /* Bluetooth cue: off clears the table once and leaves it alone. */
+    s_cue = false;
+    if (cfg->use_ble) {
+        s_cue = dsp_ble_tick(s_blep, (uint32_t)(now / 1000000), &s_cue_heard);
+        s_blep_used = true;
+    } else if (s_blep_used) {
+        memset(s_blep, 0, sizeof(s_blep));
+        s_blep_used = false;
+    }
+
     /* Baseline capture finishes: captured set replaces the store. */
     if (s_cal_active && now >= s_cal_end_us) {
         s_cal_active = false;
@@ -1209,7 +1235,7 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
     }
 
     /* Presence. */
-    bool motion_ok = s_motion > cfg->motion_threshold;
+    bool motion_ok = s_mot_present;
     bool breath_ok = false;
     if (cfg->use_breathing) {
         for (int i = 0; i < AP_TABLE; i++) {
@@ -1219,7 +1245,7 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
         }
     }
     bool base_ok = cfg->use_baseline && isfinite(s_near) && s_near >= cfg->near_threshold;
-    const char *why = motion_ok ? "motion" : breath_ok ? "breathing" : base_ok ? "baseline" : NULL;
+    const char *why = motion_ok ? "motion" : breath_ok ? "breathing" : base_ok ? "baseline" : s_cue ? "ble" : NULL;
     if (why) {
         s_last_active_us = now;
         s_why = why;
@@ -1242,8 +1268,8 @@ static void tick_locked(int64_t now, const app_config_t *cfg, tick_out_t *out)
     /* Breathing shown only when motion is low and conf clears the show threshold. */
     s_br_visible = false;
     s_br_bpm = 0; s_br_conf = 0;
-    s_br_state = !cfg->use_breathing ? "off" : s_motion > BR_MOTION_MAX ? "motion" : "listening";
-    if (cfg->use_breathing && s_motion <= BR_MOTION_MAX) {
+    s_br_state = !cfg->use_breathing ? "off" : s_motion > cfg->motion_threshold ? "motion" : "listening";
+    if (cfg->use_breathing && s_motion <= cfg->motion_threshold) {
         for (int i = 0; i < AP_TABLE; i++) {
             if (!s_ap[i].used) continue;
             if (s_ap[i].breath_conf >= BR_CONF_SHOW && s_ap[i].breath_conf > s_br_conf) {
@@ -1495,7 +1521,9 @@ static void sensing_task(void *arg)
     ESP_LOGI(TAG, "promiscuous (mgmt+data) + CSI on channel %d", ch);
 
     s_wifi_ready = true;
+    MEM("wifi, before bluetooth");
     ble_start();
+    MEM("bluetooth start");
 
     temperature_sensor_config_t tcfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     if (temperature_sensor_install(&tcfg, &s_tsens) != ESP_OK || temperature_sensor_enable(s_tsens) != ESP_OK) {
@@ -1698,7 +1726,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     if (!buf || len < 64) return 0;
     if (s_fault) {
         int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":0,\"motion\":0,\"near\":null,\"presence\":\"present\","
-                         "\"away_in\":null,\"why\":null,\"breath\":null,\"baseline\":null,"
+                         "\"away_in\":null,\"why\":null,\"breath\":null,\"baseline\":null,\"ble_cue\":null,"
                          "\"aps\":[],\"ble\":[],\"alerts\":[],"
                          "\"link\":{\"mode\":\"passive\",\"state\":\"off\",\"ssid\":null},"
                          "\"fido\":{\"state\":\"%s\"},\"stub\":true,\"fault\":\"%s\"}",
@@ -1711,6 +1739,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     bool br_vis; float br_bpm, br_conf; const char *br_state;
     float base_dev; bool cal_active; int cal_left;
     bool any_base;
+    bool cue; int cue_heard, cue_rssi; uint32_t cue_rssi_s;
 
     sensing_link_t link;
     sensing_link_get(&link);
@@ -1751,6 +1780,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
     cal_left = cal_active ? (int)((s_cal_end_us - now) / 1000000) + 1 : 0;
     any_base = false;
     for (int i = 0; i < AP_TABLE; i++) if (s_ap[i].used && s_ap[i].base_set) any_base = true;
+    cue = s_cue; cue_heard = s_cue_heard; cue_rssi = s_cue_rssi; cue_rssi_s = s_cue_rssi_s;
     nal = threats_locked(na, now);
     portEXIT_CRITICAL(&s_mux);
 
@@ -1795,6 +1825,18 @@ size_t sensing_snapshot_json(char *buf, size_t len)
         jw_fmt(&w, "{\"set\":%s,\"dev\":", any_base ? "true" : "false");
         jw_float(&w, base_dev, 2);
         jw_raw(&w, "}");
+    }
+
+    jw_raw(&w, ",\"ble_cue\":");
+    if (!config_get()->use_ble) {
+        jw_raw(&w, "null");
+    } else if (!cue) {
+        jw_raw(&w, "{\"active\":false,\"rssi\":null,\"heard\":null}");
+    } else {
+        jw_raw(&w, "{\"active\":true,\"rssi\":");
+        if ((uint32_t)(now / 1000000) - cue_rssi_s <= DSP_BLE_HOLD_S) jw_fmt(&w, "%d", cue_rssi);
+        else jw_raw(&w, "null");
+        jw_fmt(&w, ",\"heard\":%d}", cue_heard);
     }
 
     jw_raw(&w, ",\"aps\":[");
@@ -1899,7 +1941,7 @@ size_t sensing_snapshot_json(char *buf, size_t len)
         /* Last resort: an always-valid minimal frame. */
         int n = snprintf(buf, len, "{\"t\":%lld,\"ch\":%u,\"motion\":0,\"near\":null,\"presence\":\"present\","
                          "\"away_in\":null,\"why\":null,\"breath\":null,"
-                         "\"baseline\":{\"set\":false,\"dev\":0},\"aps\":[],\"ble\":[],\"alerts\":[],"
+                         "\"baseline\":{\"set\":false,\"dev\":0},\"ble_cue\":null,\"aps\":[],\"ble\":[],\"alerts\":[],"
                          "\"link\":{\"mode\":\"passive\",\"state\":\"off\",\"ssid\":null},"
                          "\"fido\":{\"state\":\"%s\"}}",
                          (long long)(now / 1000), (unsigned)s_channel, fido_state_str());

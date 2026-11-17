@@ -34,6 +34,15 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+# Passive scanner only: no pairing (SMP), no BLE 5 extended scanning, no direct test mode, one
+# controller activity (the scan), the smallest ACL pool (no connections), and fewer queued adverts.
+# Internal RAM cost of starting Bluetooth is logged at boot in dev builds ("mem after bluetooth").
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
+CONFIG_BT_CTRL_DTM_ENABLE=n
+CONFIG_BT_CTRL_BLE_MAX_ACT=1
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=1
+CONFIG_BT_CTRL_BLE_ADV_REPORT_FLOW_CTRL_NUM=50
 
 # HTTP server with WebSocket (pre-handshake hook checks Origin)
 CONFIG_HTTPD_WS_SUPPORT=y

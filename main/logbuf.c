@@ -82,9 +82,29 @@ static int ring_vprintf(const char *fmt, va_list ap)
 #include "esp_private/panic_internal.h"
 #include "xtensa_context.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "esp32s3/rom/cache.h"
 
 static bool s_panicking;
+
+/* The last panic, in its own no-init PSRAM block: the ring rolls over in minutes. */
+#define PANIC_MAGIC 0x50414e31u
+static EXT_RAM_NOINIT_ATTR struct { uint32_t magic; logbuf_panic_t p; uint32_t sum; } s_pr;
+
+static uint32_t IRAM_ATTR panic_sum(const logbuf_panic_t *p)
+{
+    const uint32_t *w = (const uint32_t *)p;
+    uint32_t s = PANIC_MAGIC;
+    for (size_t i = 0; i < sizeof(*p) / 4; i++) s = (s << 5 | s >> 27) ^ w[i];
+    return s;
+}
+
+bool logbuf_last_panic(logbuf_panic_t *out)
+{
+    if (s_pr.magic != PANIC_MAGIC || s_pr.sum != panic_sum(&s_pr.p)) return false;
+    *out = s_pr.p;
+    return true;
+}
 
 static void IRAM_ATTR panic_put(const char *p, size_t n)
 {
@@ -137,6 +157,13 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
      * EXCCAUSE, EXCVADDR, then the 4 words below SP (the caller's spilled A0-A3). */
     const XtExcFrame *f = info->frame;
     int regs[] = {info->core, f->pc, f->a0, f->a1, f->exccause, f->excvaddr};
+    if (spi_flash_cache_enabled()) {
+        s_pr.p = (logbuf_panic_t){(uint32_t)info->core, f->pc, f->a0, f->a1, f->exccause,
+                                  (uint32_t)(esp_timer_get_time() / 1000000)};
+        s_pr.sum = panic_sum(&s_pr.p);
+        s_pr.magic = PANIC_MAGIC;
+        Cache_WriteBack_Addr((uint32_t)&s_pr, sizeof(s_pr));
+    }
     panic_put("\nregs core/pc/a0/sp/cause/vaddr:", 32);
     for (size_t i = 0; i < 6; i++) { panic_put(" ", 1); panic_put_hex(regs[i]); }
     if (f->a1 >= 0x3fc88010 && f->a1 < 0x3fd00000) {

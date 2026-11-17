@@ -14,6 +14,13 @@ All notable changes to this project are recorded here. The format is based on
   Relative, not a distance; see docs/SENSING.md for what was measured.
 - Development builds only: raw BLE advertisement capture (`GET /api/ble_raw`, `tools/ble_capture.py`)
   for offline analysis, alongside the raw CSI capture.
+- Bluetooth presence cue, off by default (`use_ble`, `ble_near_dbm` default -55 dBm, range -80
+  to -30; dashboard switch and slider under Advanced, Sensing). A device that was far away and
+  then stays close keeps presence (`why: "ble"`, `ble_cue` in the feed and `/api/status`).
+  Address and RSSI only, 32 entries in PSRAM. A phone left on the desk keeps the screen
+  unlocked. See docs/SENSING.md.
+- Development builds only: the last panic record (`last_panic` in `/api/status`), kept in
+  no-init PSRAM across the reset.
 
 ### Changed
 
@@ -24,6 +31,14 @@ All notable changes to this project are recorded here. The format is based on
   instead of a snapshot of the running average, and it stores a noise floor for nearness.
   Baselines from earlier firmware still load, but nearness needs a new calibration.
 - Baseline presence uses nearness and `near_threshold` instead of the fixed deviation 0.5.
+- Motion is a noise-normalised ratio per 10 s bin instead of the per-frame CSI spread. The
+  old score saturated: with the room still it read median 0.63 (min 0.24), always above the
+  0.15 threshold. The new score reads about 0.03 to 0.06 when still, and the default 0.15 means
+  six times the noise. Motion presence needs 3 moving bins in the last 6 and holds 2 minutes.
+  Beacon RSSI no longer sets presence. Breathing is withheld above `motion_threshold` (was 0.5).
+  A person sitting perfectly still is still not detected by Wi-Fi.
+- Bluetooth uses less internal RAM: unused NimBLE and controller features are trimmed in
+  `sdkconfig.defaults` (about 10 KB more internal RAM free after Bluetooth starts).
 
 ## [0.1.1] - 2026-11-16
 

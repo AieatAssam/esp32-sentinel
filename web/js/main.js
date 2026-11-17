@@ -26,13 +26,14 @@ const E = {
 
 // Config keys, each with a control #c_<key> and a status flag [data-flag="<key>"].
 const FIELDS = ['autolock', 'away_secs', 'motion_threshold', 'near_threshold', 'channel', 'use_breathing', 'use_baseline',
-  'led_gpio', 'led_brightness', 'lock_os'];
-const NUM = new Set(['away_secs', 'motion_threshold', 'near_threshold', 'channel', 'led_gpio', 'led_brightness']);
+  'use_ble', 'ble_near_dbm', 'led_gpio', 'led_brightness', 'lock_os'];
+const NUM = new Set(['away_secs', 'motion_threshold', 'near_threshold', 'channel', 'led_gpio', 'led_brightness', 'ble_near_dbm']);
 const CONN = { live: 'Live', reconnecting: 'Reconnecting', connecting: 'Connecting' };
 const WHY = {
   motion: 'Movement seen in the room.',
   breathing: 'Breathing detected.',
   baseline: 'Differs from the empty room.',
+  ble: 'A personal device that arrived with you is close.',
 };
 const KIND = { airtag: 'AirTag', findmy: 'Find My accessory', tile: 'Tile', smarttag: 'SmartTag' };
 // Plain name for a tracker kind; anything else (a device name) is shown as it is.
@@ -294,6 +295,7 @@ function outputs() {
   const thr = +$('#c_motion_threshold').value;
   $('#o_motion_threshold').textContent = thr.toFixed(2);
   $('#o_near_threshold').textContent = (+$('#c_near_threshold').value).toFixed(2);
+  $('#o_ble_near_dbm').textContent = $('#c_ble_near_dbm').value + ' dBm';
   $('#o_led_brightness').textContent = $('#c_led_brightness').value;
   if (lastFrame) renderHud(lastFrame);
 }

@@ -50,8 +50,16 @@ def check(f):
     aw = f.get("away_in", "missing")
     if aw is not None and not (_is_int(aw) and aw >= 0):
         e.append("away_in bad")
-    if f.get("why") not in (None, "motion", "breathing", "baseline"):
+    if f.get("why") not in (None, "motion", "breathing", "baseline", "ble"):
         e.append("why bad")
+    bc = f.get("ble_cue")    # null (off, or older firmware without it) or the cue state
+    if bc is not None:
+        if not isinstance(bc, dict) or not isinstance(bc.get("active"), bool):
+            e.append("ble_cue bad")
+        elif bc["active"] and not (_is_int(bc.get("heard")) and bc["heard"] >= 0 and (bc.get("rssi") is None or _is_int(bc["rssi"]))):
+            e.append("ble_cue active bad")
+        elif not bc["active"] and (bc.get("rssi") is not None or bc.get("heard") is not None):
+            e.append("ble_cue inactive bad")
     b = f.get("breath", "missing")
     if b is not None:
         if not isinstance(b, dict) or not _is_num(b.get("bpm")) or not (_is_num(b.get("conf")) and 0 <= b["conf"] <= 1):
